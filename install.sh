@@ -61,6 +61,7 @@ clone_if_missing ai-memory-vault https://github.com/jaredrhod/ai-memory-vault.gi
 
 say "Installing Codex brain adapter into Backtalk..."
 cp "$ROOT/adapters/backtalk/brain.py" "$HOME_DIR/backtalk/backtalk/brain.py"
+python3 "$ROOT/tools/patch_backtalk.py" "$HOME_DIR/backtalk"
 
 # Claude Agent SDK is no longer used by the Codex brain. Keep every other
 # upstream dependency unchanged.
