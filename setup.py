@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
@@ -47,6 +48,12 @@ for key, value in defaults.items():
 # one-session override, never something setup silently enables.
 if data.get("mic_mode") != "ptt":
     data["mic_mode"] = "ptt"
+    changed = True
+
+# On Wayland, prefer F8 over Home. Home is commonly consumed by browser/page
+# navigation or laptop firmware. The visualizer bridge still accepts Home too.
+if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" and data.get("ptt_key") == "home":
+    data["ptt_key"] = "f8"
     changed = True
 
 if changed or not bt_cfg.exists():
