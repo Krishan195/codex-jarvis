@@ -71,7 +71,23 @@ class WarmBrain:
             except Exception as exc:
                 log(f"[brain] resume failed ({str(exc)[:100]}), starting fresh")
 
-        self._thread = await self._codex.thread_start(**common)
+        try:
+            self._thread = await self._codex.thread_start(**common)
+        except Exception as exc:
+            # A ChatGPT/Codex plan can expose a different model set than the
+            # public API catalog. If the requested fast voice model is not
+            # enabled for this account, fall back to Codex's own default
+            # instead of breaking the voice line.
+            if self.model:
+                log(
+                    f"[brain] model {self.model!r} unavailable "
+                    f"({str(exc)[:100]}), falling back to Codex default"
+                )
+                self.model = ""
+                common.pop("model", None)
+                self._thread = await self._codex.thread_start(**common)
+            else:
+                raise
         self._remember_thread()
 
     def _remember_thread(self):
