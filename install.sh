@@ -62,6 +62,7 @@ clone_if_missing ai-memory-vault https://github.com/jaredrhod/ai-memory-vault.gi
 say "Installing Codex adapters into Backtalk..."
 cp "$ROOT/adapters/backtalk/brain.py" "$HOME_DIR/backtalk/backtalk/brain.py"
 cp "$ROOT/adapters/backtalk/ptt.py" "$HOME_DIR/backtalk/backtalk/ptt.py"
+cp "$ROOT/adapters/backtalk/mouth.py" "$HOME_DIR/backtalk/backtalk/mouth.py"
 python3 "$ROOT/tools/patch_backtalk.py" "$HOME_DIR/backtalk"
 python3 "$ROOT/tools/patch_visualizer.py" "$HOME_DIR/ai-visualizer"
 
