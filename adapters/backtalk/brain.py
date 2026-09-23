@@ -119,6 +119,7 @@ class WarmBrain:
         args = [
             "codex", "exec",
             "--json",
+            "--skip-git-repo-check",
             "--cd", str(Path(CFG["agent_dir"]).expanduser()),
             "--approve-for-me",
         ]
