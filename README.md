@@ -4,11 +4,17 @@ A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 
 > **Status:** early alpha. Linux-first while the Codex voice bridge is being ported and tested.
 
-## Goal
+## What works in the current alpha
 
-Keep the experience of the original stack — persistent memory, local speech recognition and speech, the live visualizer, optional gesture controls, and an agent that can use tools — while replacing the Claude-specific brain with **OpenAI Codex**.
+- OpenAI Codex CLI is the agent brain.
+- It uses the user's existing Codex CLI authentication, including ChatGPT-plan login.
+- Backtalk's local faster-whisper speech recognition is retained.
+- Backtalk's local Kokoro speech output is retained.
+- The existing Backtalk signal bus drives Jared's AI Visualizer.
+- Codex thread IDs are saved and resumed across voice turns.
+- No OpenAI API key is required for this core path.
 
-The default path is designed to work with a normal Codex CLI login, including a ChatGPT plan login. No OpenAI API key is required for the core Codex brain.
+The first bridge uses `codex exec --json`. Because that interface emits the completed agent message rather than token-by-token assistant text, first-audio latency is not yet as low as Jared's Claude Agent SDK implementation. The next transport milestone is Codex app-server streaming.
 
 ## Architecture
 
@@ -26,50 +32,57 @@ Codex voice bridge ----> Codex CLI ----> ChatGPT/Codex account
    +---- local Kokoro TTS
    |
    +---- Jared's signal bus ----> ai-visualizer
-                              \--> barehands (later/optional)
+                              \--> barehands (next phase)
 
 AGENTS.md + markdown memory <---- persistent identity and memory
 ```
 
-## Phase 1
+## Linux alpha install
 
-The first milestone ports the existing local Backtalk audio path to Codex:
-
-- reuse Backtalk's local microphone, Whisper, Kokoro, and signal-bus pieces
-- replace `ClaudeAgentSDK` with a Codex CLI bridge
-- keep a Codex thread alive across voice turns with `codex exec resume`
-- preserve the visualizer signal contract
-- keep Codex permissions/sandboxing in charge of real computer actions
-
-The first bridge uses `codex exec --json`. A later phase can move to Codex app-server for lower latency and richer live events.
-
-## Prerequisites
-
-Linux alpha:
+Prerequisites:
 
 - Git
 - Python 3.11 or 3.12
-- Codex CLI already installed and signed in
+- Codex CLI installed and signed in
 - microphone and speakers
 
-Check Codex first:
+Check Codex:
 
 ```bash
 codex
 ```
 
-Then use `/status` and confirm your account is signed in.
+Inside Codex, use `/status` and confirm the account is signed in.
 
-## Install
-
-The installer is being added in this alpha. Once Phase 1 lands:
+Then:
 
 ```bash
 git clone https://github.com/Krishan195/codex-jarvis.git
 cd codex-jarvis
-./install.sh
-./start.sh
+bash install.sh
+bash start.sh
 ```
+
+The installer places Jared's components beside this repository in the same agent-home directory. It does not overwrite an existing non-git folder.
+
+Default alpha configuration:
+
+- agent name: Jarvis
+- push-to-talk key: Home
+- local voice: `bm_lewis`
+- STT model: `small.en`
+- face: circuit board
+- Codex thread resume: enabled
+- Codex actions: safe auto-review/workspace mode rather than disabling sandboxing
+
+## Roadmap
+
+1. **Codex brain** — current alpha using `codex exec --json`.
+2. **Streaming transport** — Codex app-server for lower first-audio latency and native approval/tool events.
+3. **Memory** — adapt the AI Memory Vault boot instructions from `CLAUDE.md` to `AGENTS.md`.
+4. **Hands** — wire Barehands into the same signal/state path.
+5. **Realtime option** — optional lower-cost realtime voice provider, while keeping local voice as the default.
+6. **Installer UX** — one-question-at-a-time setup similar to Jared's original fullstack installer.
 
 ## Upstream projects and credit
 
