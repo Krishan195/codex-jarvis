@@ -36,8 +36,8 @@ clone_if_missing ai-memory-vault https://github.com/jaredrhod/ai-memory-vault.gi
 say "Installing Codex brain adapter into Backtalk..."
 cp "$ROOT/adapters/backtalk/brain.py" "$HOME_DIR/backtalk/backtalk/brain.py"
 
-# Claude SDK is no longer needed by the Codex brain. Keep every other upstream
-# dependency unchanged.
+# Claude Agent SDK is no longer used by the Codex brain. Keep every other
+# upstream dependency unchanged.
 python3 - "$HOME_DIR/backtalk/pyproject.toml" <<'PY'
 from pathlib import Path
 import sys
@@ -57,6 +57,8 @@ else
   say "Existing AGENTS.md found; leaving it untouched."
 fi
 
+python3 "$ROOT/setup.py"
+
 say "Running Backtalk's dependency installer."
 (
   cd "$HOME_DIR/backtalk"
@@ -64,5 +66,5 @@ say "Running Backtalk's dependency installer."
   ./install.sh
 )
 
-say "Phase-1 files installed."
-say "Next: configure Backtalk + visualizer, then run the voice smoke test."
+say "Phase-1 installation finished."
+say "Run: cd $ROOT && bash start.sh"
