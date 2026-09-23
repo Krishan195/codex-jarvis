@@ -16,9 +16,21 @@ text = core.read_text(encoding="utf-8")
 marker = "CODEX-JARVIS-WAYLAND-PTT"
 
 if marker in text:
-    upgraded = text.replace(
+    upgraded = text
+    # Alpha 1: Home-only handler.
+    upgraded = upgraded.replace(
         'if (e.key !== "Home") return;',
         'if (!["v", "V", "F8", "Home"].includes(e.key)) return;'
+    )
+    # Alpha 2: F8 + Home handler.
+    upgraded = upgraded.replace(
+        'if (!["F8", "Home"].includes(e.key)) return;',
+        'if (!["v", "V", "F8", "Home"].includes(e.key)) return;'
+    )
+    # Current helper-based hook.
+    upgraded = upgraded.replace(
+        'const isPTT = (e) => ["F8", "Home"].includes(e.key);',
+        'const isPTT = (e) => ["v", "V", "F8", "Home"].includes(e.key);'
     )
     if upgraded != text:
         core.write_text(upgraded, encoding="utf-8")
