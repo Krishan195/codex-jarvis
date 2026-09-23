@@ -18,11 +18,11 @@ marker = "CODEX-JARVIS-WAYLAND-PTT"
 if marker in text:
     upgraded = text.replace(
         'if (e.key !== "Home") return;',
-        'if (!["F8", "Home"].includes(e.key)) return;'
+        'if (!["v", "V", "F8", "Home"].includes(e.key)) return;'
     )
     if upgraded != text:
         core.write_text(upgraded, encoding="utf-8")
-        print("[codex-jarvis] Upgraded visualizer PTT: F8 + Home supported.")
+        print("[codex-jarvis] Upgraded visualizer PTT: V + F8 + Home supported.")
     else:
         print("[codex-jarvis] Visualizer Wayland PTT hook already current.")
     raise SystemExit(0)
@@ -31,13 +31,13 @@ hook = r"""
 
 /* CODEX-JARVIS-WAYLAND-PTT
  * Wayland does not expose global key events to pynput. When this page has
- * focus, forward F8/Home press/release to Backtalk's loopback PTT bridge.
- * F8 is the recommended key on Linux/Wayland.
+ * focus, forward V/F8/Home press/release to Backtalk's loopback PTT bridge.
+ * V is the recommended key on Linux/Wayland.
  */
 (() => {
   const endpoint = "http://127.0.0.1:8792/ptt/";
   let down = false;
-  const isPTT = (e) => ["F8", "Home"].includes(e.key);
+  const isPTT = (e) => ["v", "V", "F8", "Home"].includes(e.key);
   const send = (state) => {
     fetch(endpoint + state, { method: "POST", mode: "cors", cache: "no-store" })
       .catch(() => {});
@@ -72,4 +72,4 @@ hook = r"""
 """
 
 core.write_text(text + hook, encoding="utf-8")
-print("[codex-jarvis] Added Wayland F8/Home push-to-talk bridge to ai-visualizer.")
+print("[codex-jarvis] Added Wayland V/F8/Home push-to-talk bridge to ai-visualizer.")
