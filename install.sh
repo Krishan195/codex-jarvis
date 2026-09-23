@@ -88,8 +88,9 @@ if [ ! -e "$HOME_DIR/AGENTS.md" ]; then
   say "Creating Codex agent instructions."
   cp "$ROOT/AGENTS.md" "$HOME_DIR/AGENTS.md"
 else
-  say "Existing AGENTS.md found; leaving it untouched."
+  say "Existing AGENTS.md found; preserving custom instructions."
 fi
+python3 "$ROOT/tools/update_agent_personality.py" "$ROOT/AGENTS.md" "$HOME_DIR/AGENTS.md"
 
 python3 "$ROOT/setup.py"
 
