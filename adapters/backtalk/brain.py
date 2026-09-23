@@ -44,7 +44,11 @@ class WarmBrain:
 
     def __init__(self, model: str | None = None, can_use_tool=None,
                  resume_id: str | None = None):
-        self.model = model or CFG.get("model") or ""
+        configured_model = model or CFG.get("model") or ""
+        # Upstream Backtalk defaults to Claude model ids. When this adapter is
+        # installed into an unchanged Backtalk config, never pass those ids to
+        # Codex; let the user's Codex CLI use its own configured/default model.
+        self.model = "" if str(configured_model).startswith("claude-") else str(configured_model)
         self._can_use_tool = can_use_tool  # reserved for app-server transport
         self.session = {
             "turns": 0,
