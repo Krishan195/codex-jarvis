@@ -59,22 +59,28 @@ clone_if_missing backtalk https://github.com/jaredrhod/backtalk.git
 clone_if_missing ai-visualizer https://github.com/jaredrhod/ai-visualizer.git
 clone_if_missing ai-memory-vault https://github.com/jaredrhod/ai-memory-vault.git
 
-say "Installing Codex brain adapter into Backtalk..."
+say "Installing Codex adapters into Backtalk..."
 cp "$ROOT/adapters/backtalk/brain.py" "$HOME_DIR/backtalk/backtalk/brain.py"
+cp "$ROOT/adapters/backtalk/ptt.py" "$HOME_DIR/backtalk/backtalk/ptt.py"
 python3 "$ROOT/tools/patch_backtalk.py" "$HOME_DIR/backtalk"
+python3 "$ROOT/tools/patch_visualizer.py" "$HOME_DIR/ai-visualizer"
 
-# Claude Agent SDK is no longer used by the Codex brain. Keep every other
-# upstream dependency unchanged.
+# Claude Agent SDK is no longer used. Add OpenAI's published Codex Python
+# SDK, which keeps one app-server process alive and streams reply deltas.
 python3 - "$HOME_DIR/backtalk/pyproject.toml" <<'PY'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
-s = p.read_text()
-s = "\n".join(
-    line for line in s.splitlines()
+lines = [
+    line for line in p.read_text().splitlines()
     if "claude-agent-sdk" not in line
-) + "\n"
-p.write_text(s)
+]
+if not any("openai-codex" in line for line in lines):
+    for i, line in enumerate(lines):
+        if line.strip() == "dependencies = [":
+            lines.insert(i + 1, '    "openai-codex>=0.153.4",')
+            break
+p.write_text("\n".join(lines) + "\n")
 PY
 
 if [ ! -e "$HOME_DIR/AGENTS.md" ]; then
