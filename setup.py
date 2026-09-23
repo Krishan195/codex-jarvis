@@ -50,10 +50,10 @@ if data.get("mic_mode") != "ptt":
     data["mic_mode"] = "ptt"
     changed = True
 
-# On Wayland, prefer F8 over Home. Home is commonly consumed by browser/page
-# navigation or laptop firmware. The visualizer bridge still accepts Home too.
-if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" and data.get("ptt_key") == "home":
-    data["ptt_key"] = "f8"
+# On Wayland, prefer a plain letter key for reliable browser capture.
+# Migrate earlier alpha defaults (Home/F8) to V automatically.
+if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" and data.get("ptt_key") in {"home", "f8"}:
+    data["ptt_key"] = "v"
     changed = True
 
 if changed or not bt_cfg.exists():
