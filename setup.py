@@ -32,7 +32,7 @@ defaults = {
     "permission_mode": "ask",
     "resume_last_session": True,
     "signals_dir": str(backtalk),
-    "greeting": "Hello Krishan, what are we working on today?",
+    "greeting": "Hello Boss, what are we working on today?",
     # Voice is latency-sensitive: use the efficient model at low effort.
     # Change these any time if more reasoning depth is worth the delay.
     "codex_model": "gpt-5.6-luna",
@@ -43,6 +43,11 @@ for key, value in defaults.items():
     if key not in data:
         data[key] = value
         changed = True
+
+# Migrate the original alpha greeting so existing installs also adopt Boss.
+if data.get("greeting") == "Hello Krishan, what are we working on today?":
+    data["greeting"] = "Hello Boss, what are we working on today?"
+    changed = True
 
 # The permanent default stays push-to-talk. --open-mic remains an explicit
 # one-session override, never something setup silently enables.
