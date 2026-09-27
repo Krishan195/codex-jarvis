@@ -2,7 +2,7 @@
 
 A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 
-> **Status:** working Linux alpha. Voice + face are functional; memory, hands, packaging, and polish are still being completed.
+> **Status:** personal Linux MVP. Voice, face, persistent memory, and one-action launch are functional. Barehands is intentionally out of scope.
 
 ## What works in the current alpha
 
@@ -12,7 +12,7 @@ A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 - Piper is the default low-latency local voice backend on CPU-only laptops; Kokoro ONNX/PyTorch remain available as quality/fallback backends.
 - The existing Backtalk signal bus drives Jared's AI Visualizer.
 - Codex thread IDs are saved and resumed across voice turns.
-- No OpenAI API key is required for this core path.
+- No OpenAI API key is required for this core path.\n- A persistent Markdown memory vault is bootstrapped into fresh Codex sessions and lives outside the git repositories so upgrades do not overwrite it.\n- The installer creates both a `jarvis` shell command and an Ubuntu `Jarvis.desktop` launcher.
 
 The current bridge keeps a persistent Codex app-server session alive and streams agent-message deltas into the voice pipeline. Replies are chunked at natural sentence/clause boundaries, then prefetched through a fast local Piper backend so synthesis can overlap playback. Kokoro ONNX/PyTorch remain available as alternate/fallback voices.
 
@@ -79,11 +79,11 @@ Default alpha configuration:
 
 1. **Voice latency/polish** — tune clause streaming, Kokoro prefetch, interruption, and timing telemetry.
 2. **Memory** — adapt the AI Memory Vault boot instructions from `CLAUDE.md` to `AGENTS.md`.
-3. **Hands** — wire Barehands into the same signal/state path.
+3. **Memory polish** — improve retrieval/indexing as the vault grows and add optional migration/import tools.
 4. **Permissions** — expose Codex approval events cleanly in voice sessions.
 5. **Wayland input** — move from the focused-browser key bridge to an optional desktop-native hotkey path.
 6. **Installer/update UX** — reliable upgrade path, self-test, diagnostics, and desktop launchers.
-7. **Tests + packaging** — regression tests for voice, config migrations, and upstream compatibility.
+7. **Tests + packaging** — regression tests for voice, memory, config migrations, and upstream compatibility.\n\nBarehands is intentionally not part of this build.
 
 ## Upstream projects and credit
 
