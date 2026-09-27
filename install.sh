@@ -100,7 +100,7 @@ python3 "$ROOT/tools/update_agent_personality.py" "$ROOT/AGENTS.md" "$HOME_DIR/A
 python3 "$ROOT/setup.py"
 
 
-say "Preparing low-latency Kokoro ONNX model..."
+say "Preparing low-latency Kokoro ONNX fp16 model..."
 python3 - "$HOME_DIR/backtalk/models" <<'PY'
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -110,10 +110,10 @@ dest = Path(sys.argv[1])
 dest.mkdir(parents=True, exist_ok=True)
 
 assets = {
-    "kokoro-v1.0.int8.onnx":
-        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx",
-    "voices-v1.0.bin":
-        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    "kokoro-v1.0.fp16.v1.1.onnx":
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.fp16.onnx",
+    "voices-v1.0.v1.1.bin":
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin",
 }
 
 for name, url in assets.items():
