@@ -156,6 +156,45 @@ across fresh Codex sessions, retrieve deeper notes on demand, and save new
 decisions without needing the user to repeat them.
 """)
 
+create(vault / "02 - Projects" / "Freelance Profile.md", """---
+status: active
+project: freelance-agent
+type: profile
+---
+# Freelance Profile
+
+This file is the source of truth for claims Jarvis may make in freelance
+proposal drafts. Keep it factual and update it when experience changes.
+
+## Verified strengths
+
+- Add only skills and platforms the user can genuinely deliver with.
+
+## Verified experience
+
+- Add concise, truthful experience that can be used in client proposals.
+
+## Portfolio / proof
+
+- Add links or descriptions only for real work the user is allowed to share.
+
+## Certifications
+
+- List only completed certifications. Put studying/in-progress items in the
+  section below, never present them as completed.
+
+## In progress
+
+- Add technologies/certifications currently being learned.
+
+## Proposal rules
+
+- Never invent years of experience.
+- Never invent client names, outcomes, certifications, or portfolio projects.
+- If a job needs a capability not verified here, call that out instead of
+  pretending.
+""")
+
 create(vault / "02 - Projects" / "Freelance Business.md", """---
 status: active
 project: freelance-agent
