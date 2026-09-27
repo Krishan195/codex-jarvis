@@ -161,7 +161,15 @@ async def ask_worker(name: str, task: str) -> dict[str, Any]:
             except Exception:
                 thread = None
         if thread is None:
-            thread = await codex.thread_start(**common)
+            try:
+                thread = await codex.thread_start(**common)
+            except Exception:
+                fallback = "deep" if str(row.get("level")) == "expert" else "fast"
+                model, effort = model_for(fallback)
+                row["level"] = fallback
+                common["model"] = model
+                common["config"] = {"model_reasoning_effort": effort}
+                thread = await codex.thread_start(**common)
 
         turn = await thread.turn(
             task.strip(),
