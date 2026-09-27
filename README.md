@@ -104,3 +104,66 @@ Codex itself is an OpenAI product and is not included in this repository.
 The integration and AGPL-derived portions of this repository are released under **AGPL-3.0-or-later**. Individual upstream components retain their own copyright and license notices. The AI Memory Vault material is CC BY-SA 4.0 upstream and must retain that license when copied or adapted.
 
 This is an independent community adaptation and is not an official Jared Rhodenizer or OpenAI project.
+
+
+## Personal-agent core
+
+The personal-agent layer is installed by `install.sh` and exposed through
+`jarvis-core`.
+
+It provides:
+
+- OS Secret Service storage for credentials and OAuth refresh tokens
+- Google Workspace OAuth for Gmail + Google Calendar
+- a read-only daily briefing
+- a one-time approval broker for Gmail send and Calendar create actions
+- a local audit trail for external action requests and results
+- a user-level systemd timer for the morning briefing
+
+Check it with:
+
+```bash
+jarvis-core status
+```
+
+### Connect Google Workspace
+
+Create a Google Cloud OAuth Desktop client with Gmail API and Google Calendar
+API enabled, download its client JSON, then:
+
+```bash
+jarvis-core google-auth --client-json ~/Downloads/client_secret_....json
+jarvis-core briefing
+```
+
+The client configuration and OAuth refresh token are stored in Linux Secret
+Service rather than in this repository or the Memory vault.
+
+The daily briefing timer is installed for **08:00 local time** and is enabled
+only after Google OAuth succeeds:
+
+```bash
+systemctl --user status jarvis-briefing.timer
+```
+
+### Approval example
+
+Jarvis can prepare an email without sending it:
+
+```bash
+jarvis-core request-email \
+  --to person@example.com \
+  --subject "Hello" \
+  --body "Draft text"
+```
+
+That returns a short approval ID. A consequential write happens only after:
+
+```bash
+jarvis-core approve APPROVAL_ID
+jarvis-core execute APPROVAL_ID
+```
+
+Approvals expire, are one-time, and are recorded in a local audit log.
+
+See [SECURITY.md](SECURITY.md) for the credential model.
