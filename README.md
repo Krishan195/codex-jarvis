@@ -234,3 +234,71 @@ jarvis-core show \
 This is intended for voice requests such as "show me the latest iPhone": Jarvis
 can search/read the current source, extract the page image/description, speak a
 short answer, and open the visual card.
+
+
+## Freelance co-pilot
+
+The `jarvis-freelance` command turns Jarvis into a local freelance
+opportunity and delivery co-pilot.
+
+It intentionally does **not** auto-submit proposals, spend Connects, message
+clients, accept contracts, or change account settings. Discovery, analysis,
+drafting, and local project work are automated; platform submission and
+commercial commitments remain human actions.
+
+### Capture opportunities from the logged-in Upwork feed
+
+Open the Upwork Find Work/job feed in the dedicated Jarvis browser, then:
+
+```bash
+jarvis-freelance scan-browser
+jarvis-freelance list
+```
+
+The browser scan is read-only and deduplicates jobs into a local SQLite
+pipeline.
+
+### Capture Upwork job-alert email
+
+After Google OAuth is configured:
+
+```bash
+jarvis-freelance scan-email --days 7
+jarvis-freelance digest
+```
+
+The installer creates a daily 08:30 user timer that scans the user's own Upwork
+job-alert email. It is enabled together with the morning briefing after Google
+OAuth succeeds.
+
+### Analyze and prepare a proposal
+
+```bash
+jarvis-freelance show 12
+jarvis-freelance analyze 12 --score 86 --reason "Strong Linux/AWS fit; clarify migration window."
+jarvis-freelance status-set 12 shortlisted
+jarvis-freelance proposal-save 12 --file /tmp/proposal.txt
+```
+
+Jarvis can perform these steps from the voice session after reading the actual
+job. Proposal drafts must remain truthful: no invented certifications,
+experience, portfolio items, or outcomes.
+
+### Start delivery work
+
+When a real project has been accepted manually:
+
+```bash
+jarvis-freelance workspace 12
+```
+
+This creates a local project folder under `~/my-agent/Freelance/` with the
+captured brief, fit reasoning, proposal draft, and a delivery checklist so
+Jarvis and the user can build, test, document, and prepare handover together.
+
+Structured pipeline state lives under Jarvis's local application data. A
+human-readable dashboard is written to:
+
+```text
+Memory/05 - Resources/Jobs/Freelance Opportunities.md
+```
