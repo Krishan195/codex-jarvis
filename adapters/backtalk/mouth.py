@@ -48,6 +48,7 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -60,7 +61,12 @@ EL_RATE = 44100
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 _pipe = None
+_onnx_pipe = None
 _pipe_lock = threading.Lock()
+
+_MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
+_ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.int8.onnx"
+_ONNX_VOICES = _MODEL_DIR / "voices-v1.0.bin"
 
 
 def _ensure_espeak():
@@ -157,25 +163,45 @@ def _sweep_orphan_espeak_tempdirs():
 
 
 def warm():
-    """Load the Kokoro pipeline (first call downloads the model to the
-    HF cache). Called at startup while the greeting text is composed."""
-    global _pipe
+    """Load the fastest available local Kokoro backend.
+
+    Codex Jarvis prefers the quantized ONNX graph on CPU. The original
+    PyTorch Kokoro pipeline remains a fallback so a missing/corrupt ONNX
+    model never makes the voice line unusable.
+    """
+    global _pipe, _onnx_pipe
     with _pipe_lock:
-        if _pipe is None:
-            _ensure_espeak()
-            # Before kokoro makes this run's scratch dirs, clear the ones
-            # earlier runs could not clean up on their way out.
-            _sweep_orphan_espeak_tempdirs()
-            from kokoro import KPipeline
-            # The voice name's first letter IS the language pipeline:
-            # a=American English, b=British English, e/f/h/i/j/p/z = the
-            # other shipped languages. bm_lewis -> 'b'.
-            lang = (CFG["voice"] or "bm_lewis")[0]
-            log(f"[mouth] loading kokoro (lang '{lang}', "
-                f"voice {CFG['voice']})...")
-            _pipe = KPipeline(lang_code=lang)
-            log("[mouth] voice ready")
-    return _pipe
+        if _onnx_pipe is not None:
+            return _onnx_pipe
+        if _pipe is not None:
+            return _pipe
+
+        _ensure_espeak()
+        _sweep_orphan_espeak_tempdirs()
+
+        if _ONNX_MODEL.exists() and _ONNX_VOICES.exists():
+            try:
+                from kokoro_onnx import Kokoro
+                log(
+                    f"[mouth] loading Kokoro ONNX int8 "
+                    f"(voice {CFG['voice']})..."
+                )
+                _onnx_pipe = Kokoro(str(_ONNX_MODEL), str(_ONNX_VOICES))
+                log("[mouth] voice ready (kokoro-onnx int8)")
+                return _onnx_pipe
+            except Exception as exc:
+                log(
+                    f"[mouth] kokoro-onnx unavailable ({str(exc)[:120]}), "
+                    "falling back to PyTorch Kokoro"
+                )
+
+        from kokoro import KPipeline
+        lang = (CFG["voice"] or "bm_lewis")[0]
+        log(f"[mouth] loading PyTorch kokoro (lang '{lang}', "
+            f"voice {CFG['voice']})...")
+        _pipe = KPipeline(lang_code=lang)
+        log("[mouth] voice ready (PyTorch fallback)")
+        return _pipe
 
 
 def split_sentences(text: str) -> list[str]:
@@ -183,14 +209,33 @@ def split_sentences(text: str) -> list[str]:
     return parts or ([text.strip()] if text.strip() else [])
 
 
+def _voice_lang(voice: str) -> str:
+    # Kokoro's English voice prefixes: a*=US, b*=British.
+    return "en-gb" if str(voice).startswith("b") else "en-us"
+
+
 def _stream_kokoro(text: str):
-    """One sentence -> int16 PCM chunks at 24kHz, in-process."""
-    pipe = warm()
+    """One speech chunk -> int16 PCM using ONNX when available."""
+    engine = warm()
     try:
         speed = float(CFG.get("speed") or 1.0)
     except (TypeError, ValueError):
         speed = 1.0
-    for _, _, audio in pipe(text, voice=CFG["voice"], speed=speed):
+
+    if _onnx_pipe is not None and engine is _onnx_pipe:
+        audio, rate = engine.create(
+            text,
+            voice=CFG["voice"],
+            speed=speed,
+            lang=_voice_lang(CFG["voice"]),
+        )
+        a = np.asarray(audio, dtype=np.float32)
+        if a.size:
+            yield rate, (np.clip(a, -1.0, 1.0) * 32767).astype(np.int16)
+        return
+
+    # Original PyTorch fallback.
+    for _, _, audio in engine(text, voice=CFG["voice"], speed=speed):
         a = np.asarray(audio, dtype=np.float32)
         if a.size:
             yield (np.clip(a, -1.0, 1.0) * 32767).astype(np.int16)
