@@ -10,7 +10,9 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 import base64
+import html
 import json
+import re
 from typing import Any
 
 from . import secrets
@@ -106,6 +108,102 @@ def inbox_summary(max_results: int = 10) -> list[dict[str, str]]:
             "date": headers.get("date", ""),
             "snippet": msg.get("snippet", ""),
         })
+    return rows
+
+
+def _decode_part(data: str) -> str:
+    if not data:
+        return ""
+    padding = "=" * (-len(data) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(data + padding)
+        return raw.decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _message_bodies(payload: dict[str, Any]) -> tuple[str, str]:
+    plain: list[str] = []
+    rich: list[str] = []
+
+    def walk(part: dict[str, Any]) -> None:
+        mime = str(part.get("mimeType") or "").lower()
+        body = part.get("body") or {}
+        text = _decode_part(str(body.get("data") or ""))
+        if text:
+            if mime == "text/plain":
+                plain.append(text)
+            elif mime == "text/html":
+                rich.append(text)
+        for child in part.get("parts") or []:
+            walk(child)
+
+    walk(payload or {})
+    return "\n".join(plain), "\n".join(rich)
+
+
+def _links_from_text(text: str) -> list[str]:
+    urls = re.findall(r"https?://[^\s<>\"']+", html.unescape(text or ""))
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        url = url.rstrip(").,;]}")
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def search_messages(
+    query: str,
+    *,
+    max_results: int = 50,
+    include_body: bool = False,
+) -> list[dict[str, Any]]:
+    """Search Gmail with a caller-supplied Gmail query.
+
+    Read-only helper used by the freelance agent and other local jobs.
+    """
+    svc = _gmail()
+    result = svc.users().messages().list(
+        userId="me",
+        q=query,
+        maxResults=max_results,
+    ).execute()
+    rows: list[dict[str, Any]] = []
+
+    for item in result.get("messages", []):
+        fmt = "full" if include_body else "metadata"
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "id": item["id"],
+            "format": fmt,
+        }
+        if not include_body:
+            kwargs["metadataHeaders"] = ["From", "Subject", "Date"]
+        msg = svc.users().messages().get(**kwargs).execute()
+        headers = {
+            h["name"].lower(): h["value"]
+            for h in msg.get("payload", {}).get("headers", [])
+        }
+        row: dict[str, Any] = {
+            "id": item["id"],
+            "thread_id": msg.get("threadId", ""),
+            "from": headers.get("from", "(unknown sender)"),
+            "subject": headers.get("subject", "(no subject)"),
+            "date": headers.get("date", ""),
+            "snippet": msg.get("snippet", ""),
+        }
+        if include_body:
+            plain, rich = _message_bodies(msg.get("payload", {}))
+            body = plain.strip()
+            if not body and rich:
+                body = re.sub(r"<[^>]+>", " ", html.unescape(rich))
+                body = " ".join(body.split())
+            links = _links_from_text(plain + "\n" + rich)
+            row["body"] = body[:20000]
+            row["links"] = links[:80]
+        rows.append(row)
     return rows
 
 
