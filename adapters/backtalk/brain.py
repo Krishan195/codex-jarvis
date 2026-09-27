@@ -30,7 +30,7 @@ _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 _MIN_CLAUSE_CHARS = 42
 _MAX_VOICE_CHARS = 110
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
-CAPABILITY_REVISION = 5
+CAPABILITY_REVISION = 6
 
 
 def _agent_bootstrap() -> str:
@@ -194,11 +194,14 @@ class WarmBrain:
         except OSError:
             pass
 
-    def _load_resume_id(self) -> str | None:
-        try:
-            raw = SESSION_FILE.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
+    def _validate_resume_id(self, raw: str | None) -> str | None:
+        """Accept only session metadata written by this capability revision.
+
+        Backtalk main reads SESSION_FILE before constructing WarmBrain and
+        passes its raw contents as resume_id. Validate that value here too;
+        otherwise a legacy plain thread id bypasses the revision check.
+        """
+        raw = (raw or "").strip()
         if not raw:
             return None
         try:
@@ -209,17 +212,24 @@ class WarmBrain:
                 return None
             return str(data.get("thread_id") or "") or None
         except Exception:
-            # Legacy session files contained only the thread id. Force one
-            # clean thread after this capability upgrade.
             log("[brain] legacy thread metadata detected; starting fresh thread")
             return None
+
+    def _load_resume_id(self) -> str | None:
+        try:
+            raw = SESSION_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return self._validate_resume_id(raw)
 
     async def start(self):
         codex_bin = shutil.which("codex")
         if not codex_bin:
             raise CodexError("Codex CLI was not found on PATH.")
 
-        resume = self._resume_id
+        # Backtalk main may pass the raw session-file contents into the
+        # constructor. Validate it instead of trusting it as a thread id.
+        resume = self._validate_resume_id(self._resume_id)
         if not resume and CFG.get("resume_last_session"):
             resume = self._load_resume_id()
 
