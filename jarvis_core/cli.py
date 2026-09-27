@@ -298,6 +298,8 @@ def cmd_execute(args) -> int:
                 f"stdout:\n{result['stdout']}\n"
                 f"stderr:\n{result['stderr']}"
             )
+            if result["returncode"] != 0:
+                raise RuntimeError(detail)
             print(detail)
 
         else:
