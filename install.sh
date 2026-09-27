@@ -222,7 +222,54 @@ exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.freelance "\$@"
 EOF
 chmod +x "$HOME/.local/bin/jarvis-freelance"
 
+cat > "$HOME/.local/bin/jarvis-deep" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.model_router "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-deep"
+
+cat > "$HOME/.local/bin/jarvis-worker" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.workers "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-worker"
+
+cat > "$HOME/.local/bin/jarvis-memory" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.memory_manager "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-memory"
+
+cat > "$HOME/.local/bin/jarvis-task" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.tasks "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-task"
+
+cat > "$HOME/.local/bin/jarvis-broker" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.broker "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-broker"
+
 if [ "$(uname -s)" = "Linux" ]; then
+  old_browser_profile="$HOME_DIR/BrowserProfile"
+  new_browser_profile="$HOME/.local/share/codex-jarvis/browser-profile"
+  if [ -d "$old_browser_profile" ] && [ ! -e "$new_browser_profile" ]; then
+    say "Migrating Jarvis browser profile outside the Codex workspace..."
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl --user stop jarvis-browser.service >/dev/null 2>&1 || true
+    fi
+    mkdir -p "$(dirname "$new_browser_profile")"
+    mv "$old_browser_profile" "$new_browser_profile"
+    chmod 700 "$new_browser_profile" || true
+  fi
+
   desktop_dir="$HOME/Desktop"
   mkdir -p "$desktop_dir"
   cat > "$desktop_dir/Jarvis.desktop" <<EOF
@@ -242,6 +289,36 @@ EOF
   if command -v systemctl >/dev/null 2>&1; then
     unit_dir="$HOME/.config/systemd/user"
     mkdir -p "$unit_dir"
+    cat > "$unit_dir/jarvis-broker.service" <<EOF
+[Unit]
+Description=Jarvis trusted local control broker
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/jarvis-broker
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target
+EOF
+
+    cat > "$unit_dir/jarvis-scheduler.service" <<EOF
+[Unit]
+Description=Jarvis safe local automation scheduler
+After=graphical-session.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/jarvis-task daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+
     cat > "$unit_dir/jarvis-browser.service" <<EOF
 [Unit]
 Description=Jarvis persistent browser
@@ -302,6 +379,8 @@ Unit=jarvis-freelance-scan.service
 WantedBy=timers.target
 EOF
     systemctl --user daemon-reload || true
+    systemctl --user enable --now jarvis-broker.service >/dev/null 2>&1 || true
+    systemctl --user enable --now jarvis-scheduler.service >/dev/null 2>&1 || true
     systemctl --user enable jarvis-browser.service >/dev/null 2>&1 || true
     say "Jarvis browser service installed. Start with: jarvis-core browser-start"
     say "Daily briefing timer installed at 08:00; it will enable after Google OAuth."
@@ -315,6 +394,10 @@ say "Start with: jarvis"
 say "Core status: jarvis-core status"
 say "Browser: jarvis-core browser-start"
 say "Freelance agent: jarvis-freelance status"
+say "Deep work: jarvis-deep route --task '...'"
+say "Project workers: jarvis-worker list"
+say "Memory manager: jarvis-memory health"
+say "Automation: jarvis-task list"
 say "Website password vault: jarvis-core credential-set example.com --username USER"
 say "Google setup: jarvis-core google-auth --client-json /path/to/client_secret.json"
 say "Or double-click: $HOME/Desktop/Jarvis.desktop"
