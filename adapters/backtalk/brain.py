@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -23,6 +24,11 @@ from backtalk.config import CFG, DISCIPLINE
 from backtalk.vlog import log
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# Voice chunking: do not wait for an entire long sentence before feeding TTS.
+# Prefer natural clause boundaries, with a conservative hard-length fallback.
+_CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
+_MIN_CLAUSE_CHARS = 42
+_MAX_VOICE_CHARS = 110
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
 
 
@@ -213,6 +219,47 @@ class WarmBrain:
         buf = ""
         completed_text = ""
         saw_delta = False
+        turn_t0 = time.monotonic()
+        first_delta_logged = False
+        first_chunk_logged = False
+
+        def pop_voice_chunk(force: bool = False) -> str | None:
+            nonlocal buf
+
+            # Best boundary: a completed sentence.
+            m = _SENTENCE_END.search(buf)
+            if m:
+                chunk = buf[:m.end()].strip()
+                buf = buf[m.end():]
+                return chunk or None
+
+            # Next best: a substantial clause. This lets Kokoro begin
+            # sentence N+1 before Codex has finished the whole sentence.
+            if len(buf) >= _MIN_CLAUSE_CHARS:
+                clause = None
+                for cm in _CLAUSE_END.finditer(buf):
+                    if cm.end() >= _MIN_CLAUSE_CHARS:
+                        clause = cm
+                if clause:
+                    chunk = buf[:clause.end()].strip()
+                    buf = buf[clause.end():]
+                    return chunk or None
+
+            # Hard fallback for long punctuation-light speech. Split only at
+            # whitespace so TTS never receives half a word.
+            if len(buf) >= _MAX_VOICE_CHARS:
+                cut = buf.rfind(" ", 0, _MAX_VOICE_CHARS + 1)
+                if cut > 0:
+                    chunk = buf[:cut].strip()
+                    buf = buf[cut + 1:]
+                    return chunk or None
+
+            if force and buf.strip():
+                chunk = buf.strip()
+                buf = ""
+                return chunk
+            return None
+
         try:
             async for event in turn.stream():
                 method = getattr(event, "method", "")
@@ -222,15 +269,18 @@ class WarmBrain:
                     if not delta:
                         continue
                     saw_delta = True
+                    if not first_delta_logged:
+                        log(f"[latency] codex-first-delta={int((time.monotonic()-turn_t0)*1000)}ms")
+                        first_delta_logged = True
                     buf += delta
                     while True:
-                        m = _SENTENCE_END.search(buf)
-                        if not m:
+                        chunk = pop_voice_chunk()
+                        if not chunk:
                             break
-                        sentence = buf[:m.end()].strip()
-                        buf = buf[m.end():]
-                        if sentence:
-                            yield sentence
+                        if not first_chunk_logged:
+                            log(f"[latency] codex-first-voice-chunk={int((time.monotonic()-turn_t0)*1000)}ms")
+                            first_chunk_logged = True
+                        yield chunk
 
                 elif method == "item/completed":
                     try:
@@ -244,8 +294,11 @@ class WarmBrain:
                     self._tally_usage(event)
 
             if saw_delta:
-                if buf.strip():
-                    yield buf.strip()
+                tail = pop_voice_chunk(force=True)
+                if tail:
+                    if not first_chunk_logged:
+                        log(f"[latency] codex-first-voice-chunk={int((time.monotonic()-turn_t0)*1000)}ms")
+                    yield tail
             elif completed_text.strip():
                 yield completed_text.strip()
 
