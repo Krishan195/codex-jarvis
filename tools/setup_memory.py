@@ -156,6 +156,92 @@ across fresh Codex sessions, retrieve deeper notes on demand, and save new
 decisions without needing the user to repeat them.
 """)
 
+create(vault / "02 - Projects" / "Freelance Business.md", """---
+status: active
+project: freelance-agent
+type: reference
+---
+# Freelance Business
+
+## Goal
+
+Use Jarvis as a freelance co-pilot: find suitable opportunities, analyze fit,
+prepare tailored proposals, organize client work, and help deliver projects
+efficiently while keeping account submissions and commercial commitments under
+human control.
+
+## Target work
+
+Prioritize opportunities around demonstrated technical areas such as DevOps,
+Linux/system administration, cloud infrastructure, automation, containers,
+Kubernetes, Microsoft/Windows infrastructure, and related operational work.
+
+Before claiming any specific experience, certification, tool depth, or past
+result in a proposal, verify it from the user's real profile/history. Never
+inflate credentials.
+
+## Operating model
+
+1. Capture opportunities from read-only browser discovery or job-alert email.
+2. Analyze requirements, risk, effort, and fit.
+3. Shortlist credible work.
+4. Draft a job-specific proposal.
+5. User performs platform submission when eligible.
+6. If accepted, create a delivery workspace.
+7. Jarvis and the user build, test, document, and review the deliverable.
+8. User approves final delivery.
+
+## Guardrails
+
+- No automated proposal/bid submission.
+- No automated Connect spending.
+- No automated client messaging or contract acceptance.
+- No bypassing account age, identity, verification, or eligibility rules.
+- No invented skills, portfolio work, experience, or outcomes.
+""")
+
+create(vault / "05 - Resources" / "Jobs" / "Freelance Agent.md", """---
+status: active
+project: freelance-agent
+type: job
+---
+# Freelance Agent
+
+## Trigger
+
+Run daily from job-alert email, or on demand while the authenticated freelance
+job feed is open in the Jarvis browser.
+
+## Workflow
+
+- Scan and deduplicate opportunities.
+- Inspect promising jobs in detail.
+- Evaluate technical fit, missing requirements, delivery risk, and effort.
+- Save fit analysis and shortlist credible work.
+- Draft a concise tailored proposal.
+- Keep platform submission manual.
+- Track interview, active project, delivery, and outcome state.
+- For accepted work, create a local project workspace and record scope and
+  acceptance criteria before implementation.
+
+## Commands
+
+- jarvis-freelance scan-browser
+- jarvis-freelance scan-email
+- jarvis-freelance list
+- jarvis-freelance show ID
+- jarvis-freelance analyze ID
+- jarvis-freelance proposal-save ID
+- jarvis-freelance status-set ID STATUS
+- jarvis-freelance workspace ID
+- jarvis-freelance digest
+
+## Source of truth
+
+Structured state is local in Jarvis's freelance SQLite database. A readable
+dashboard is generated at [[Freelance Opportunities]].
+""")
+
 create(vault / "03 - Routines" / "Routines.md", """---
 status: active
 project: personal
@@ -282,6 +368,24 @@ ensure_block(
 - When the user asks to show a product/place/object and visuals help, Jarvis may
   open a desktop information card with an image, concise description, and
   source link after gathering current information.
+""",
+)
+
+ensure_block(
+    vault / "02 - Projects" / "Codex Jarvis.md",
+    "<!-- JARVIS-FREELANCE-AGENT -->",
+    """<!-- JARVIS-FREELANCE-AGENT -->
+## Freelance co-pilot
+
+- Jarvis maintains a local freelance opportunity pipeline and delivery
+  workspaces.
+- Daily recurring discovery should prefer job-alert email over aggressive
+  browser automation.
+- Jarvis may analyze jobs and prepare proposals, but platform submission,
+  Connect spending, client messaging, contract acceptance, and account changes
+  remain manual human actions.
+- Accepted client work can be moved into a local workspace so Jarvis and the
+  user can build, test, document, and prepare delivery together.
 """,
 )
 
