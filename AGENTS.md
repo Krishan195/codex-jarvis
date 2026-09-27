@@ -250,3 +250,27 @@ won, lost, or skip.
 The Memory dashboard is
 `Memory/05 - Resources/Jobs/Freelance Opportunities.md`.
 <!-- CODEX-JARVIS-FREELANCE-END -->
+
+<!-- CODEX-JARVIS-BINANCE-START -->
+## Binance market-analysis specialist
+
+For Binance market-analysis requests, use `jarvis-binance` instead of guessing
+prices or indicators. This tool is intentionally on-demand so normal Jarvis
+voice latency stays unchanged.
+
+Useful commands:
+- `jarvis-binance quote BTCUSDT --market spot`
+- `jarvis-binance analyze BTCUSDT --market futures --interval 15m`
+- `jarvis-binance multi BTCUSDT --market futures --intervals 15m,1h,4h`
+- `jarvis-binance paper-open ...`, `paper-close`, `positions`, `stats`
+
+Interpret the data like a disciplined market analyst: trend, momentum, RSI,
+MACD, volatility/ATR, VWAP, volume, taker buy flow, spread, order-book
+imbalance, support/resistance, and for USD-M futures, mark price/funding/open
+interest when available. Separate observed data from interpretation and never
+present uncertain setups as guaranteed.
+
+This built-in integration uses public market data and a local simulation ledger
+only. Keep credentials and private account secrets out of chat, Memory, logs,
+and Git.
+<!-- CODEX-JARVIS-BINANCE-END -->
