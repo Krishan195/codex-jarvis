@@ -262,4 +262,27 @@ ensure_block(
 """,
 )
 
+ensure_block(
+    vault / "02 - Projects" / "Codex Jarvis.md",
+    "<!-- JARVIS-BROWSER-UBUNTU-VISUAL -->",
+    """<!-- JARVIS-BROWSER-UBUNTU-VISUAL -->
+## Browser, Ubuntu, and visual-answer requirements
+
+- Jarvis uses a dedicated persistent Chrome profile for browser automation.
+- The user signs into Google/browser accounts manually once when possible;
+  Jarvis reuses authenticated browser sessions rather than storing Google
+  passwords.
+- Website passwords explicitly entrusted to Jarvis live only in Linux Secret
+  Service. API keys use the same secret vault.
+- Read-only browsing/searching may run automatically. Login submissions,
+  consequential clicks, and Ubuntu state-changing commands use one-time scoped
+  approval.
+- Jarvis may manage the Ubuntu user environment, but must not disable Codex
+  sandboxing, configure passwordless sudo, or store the sudo password.
+- When the user asks to show a product/place/object and visuals help, Jarvis may
+  open a desktop information card with an image, concise description, and
+  source link after gathering current information.
+""",
+)
+
 print(f"[codex-jarvis] memory vault: {vault}")
