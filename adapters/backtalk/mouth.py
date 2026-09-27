@@ -63,11 +63,13 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 _pipe = None
 _onnx_pipe = None
+_piper_voice = None
 _pipe_lock = threading.Lock()
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 _ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.v1.1.onnx"
 _ONNX_VOICES = _MODEL_DIR / "voices-v1.0.v1.1.bin"
+_PIPER_MODEL = _MODEL_DIR / "en_GB-alan-medium.onnx"
 
 
 def _ensure_espeak():
@@ -163,13 +165,34 @@ def _sweep_orphan_espeak_tempdirs():
         log(f"[mouth] swept {swept} orphaned espeak temp dir(s)")
 
 
-def warm():
-    """Load the fastest available local Kokoro backend.
+def _warm_piper():
+    """Load the fast CPU-friendly Piper voice once per process."""
+    global _piper_voice
+    with _pipe_lock:
+        if _piper_voice is not None:
+            return _piper_voice
+        if not _PIPER_MODEL.exists():
+            raise FileNotFoundError(f"Piper voice model missing: {_PIPER_MODEL}")
+        from piper import PiperVoice
+        log(f"[mouth] loading Piper fast voice ({_PIPER_MODEL.name})...")
+        _piper_voice = PiperVoice.load(_PIPER_MODEL)
+        log("[mouth] voice ready (piper)")
+        return _piper_voice
 
-    Codex Jarvis prefers the quantized ONNX graph on CPU. The original
-    PyTorch Kokoro pipeline remains a fallback so a missing/corrupt ONNX
-    model never makes the voice line unusable.
+
+def warm():
+    """Load the configured local voice backend.
+
+    Piper is the low-latency default for CPU-only laptops. Kokoro remains
+    available as the higher-quality fallback/alternate backend.
     """
+    backend = str(CFG.get("tts_backend") or "piper").lower()
+    if backend == "piper":
+        try:
+            return _warm_piper()
+        except Exception as exc:
+            log(f"[mouth] Piper unavailable ({str(exc)[:120]}), falling back to Kokoro")
+
     global _pipe, _onnx_pipe
     with _pipe_lock:
         if _onnx_pipe is not None:
@@ -224,6 +247,24 @@ def warm():
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENTENCE_RE.split(text.strip()) if p.strip()]
     return parts or ([text.strip()] if text.strip() else [])
+
+
+def _stream_piper(text: str):
+    """One speech chunk -> Piper int16 PCM."""
+    from piper import SynthesisConfig
+
+    voice = _warm_piper()
+    try:
+        speed = float(CFG.get("speed") or 1.0)
+    except (TypeError, ValueError):
+        speed = 1.0
+    speed = min(max(speed, 0.7), 1.5)
+    syn_config = SynthesisConfig(length_scale=(1.0 / speed))
+
+    for chunk in voice.synthesize(text, syn_config=syn_config):
+        pcm = np.frombuffer(chunk.audio_int16_bytes, dtype=np.int16).copy()
+        if pcm.size:
+            yield int(chunk.sample_rate), pcm
 
 
 def _voice_lang(voice: str) -> str:
@@ -397,8 +438,15 @@ def synth_stream(text: str, timeout: float = 30.0):
         except Exception as e:
             log(f"[mouth] elevenlabs failed ({str(e)[:60]}) — "
                 f"falling back to {CFG['voice']}")
-    # _stream_kokoro already yields (sample_rate, pcm). Do not wrap it
-    # again or playback receives a nested tuple instead of a waveform.
+    backend = str(CFG.get("tts_backend") or "piper").lower()
+    if backend == "piper":
+        try:
+            yield from _stream_piper(text)
+            return
+        except Exception as exc:
+            log(f"[mouth] Piper synth failed ({str(exc)[:100]}), falling back to Kokoro")
+
+    # _stream_kokoro already yields (sample_rate, pcm).
     yield from _stream_kokoro(text)
 
 
