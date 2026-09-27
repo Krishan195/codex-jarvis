@@ -30,7 +30,7 @@ _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 _MIN_CLAUSE_CHARS = 42
 _MAX_VOICE_CHARS = 110
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
-CAPABILITY_REVISION = 6
+CAPABILITY_REVISION = 7
 
 
 def _agent_bootstrap() -> str:
@@ -49,7 +49,9 @@ def _agent_bootstrap() -> str:
         "This is the user's local Jarvis desktop agent, not a generic chat "
         "session. The command ~/.local/bin/jarvis-core is installed and is "
         "the gateway for browser control, visual popups, credentials, Google "
-        "services, approvals, and local desktop actions. When the user asks "
+        "services, approvals, and local desktop actions. It talks to a trusted "
+        "local broker for desktop access while this Codex thread stays in a "
+        "workspace sandbox. When the user asks "
         "you to open/search/read/show something, actually invoke the relevant "
         "jarvis-core command with the shell tool before claiming the capability "
         "is unavailable. Never invent a limitation without first attempting "
@@ -143,7 +145,7 @@ class WarmBrain:
             cwd=str(Path(CFG["agent_dir"]).expanduser()),
             developer_instructions=DISCIPLINE + local_rules + memory,
             config={"model_reasoning_effort": self.effort},
-            sandbox=Sandbox.full_access,
+            sandbox=Sandbox.workspace_write,
             approval_mode=ApprovalMode.auto_review,
         )
         if self.model:
@@ -327,7 +329,7 @@ class WarmBrain:
             self._prompt(utterance),
             model=self.model or None,
             effort=self.effort,
-            sandbox=Sandbox.full_access,
+            sandbox=Sandbox.workspace_write,
             approval_mode=ApprovalMode.auto_review,
         )
         self._active_turn = turn
