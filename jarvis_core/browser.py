@@ -161,6 +161,36 @@ def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
         pw.stop()
 
 
+def inspect_interactive(max_items: int = 80) -> list[dict[str, str]]:
+    """Return a compact map of clickable/form controls on the active page."""
+    pw, browser = _connect()
+    try:
+        page = _page(browser)
+        items = page.locator(
+            "a, button, input, textarea, select, [role=button], [role=link]"
+        )
+        count = min(items.count(), max_items)
+        rows: list[dict[str, str]] = []
+        for i in range(count):
+            el = items.nth(i)
+            try:
+                rows.append({
+                    "tag": el.evaluate("e => e.tagName.toLowerCase()"),
+                    "text": (el.inner_text(timeout=500) or "").strip()[:160],
+                    "id": el.get_attribute("id") or "",
+                    "name": el.get_attribute("name") or "",
+                    "type": el.get_attribute("type") or "",
+                    "placeholder": el.get_attribute("placeholder") or "",
+                    "aria_label": el.get_attribute("aria-label") or "",
+                    "href": el.get_attribute("href") or "",
+                })
+            except Exception:
+                continue
+        return rows
+    finally:
+        pw.stop()
+
+
 def login_window(url: str) -> dict[str, str]:
     """Open a site in the persistent profile for a one-time manual login."""
     return open_url(url, new_tab=True)
