@@ -123,7 +123,7 @@ def open_url(url: str, *, new_tab: bool = True) -> dict[str, str]:
         page.bring_to_front()
         return {"title": page.title(), "url": page.url}
     finally:
-        browser.close()
+        # Disconnect Playwright without terminating the persistent Chrome daemon.
         pw.stop()
 
 
@@ -157,7 +157,7 @@ def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
             "text": text[:max_chars],
         }
     finally:
-        browser.close()
+        # Disconnect Playwright without terminating the persistent Chrome daemon.
         pw.stop()
 
 
@@ -192,7 +192,7 @@ def login_with_credential(
         page.bring_to_front()
         return {"title": page.title(), "url": page.url}
     finally:
-        browser.close()
+        # Disconnect Playwright without terminating the persistent Chrome daemon.
         pw.stop()
 
 
@@ -205,7 +205,7 @@ def click(selector: str) -> dict[str, str]:
         page.bring_to_front()
         return {"title": page.title(), "url": page.url}
     finally:
-        browser.close()
+        # Disconnect Playwright without terminating the persistent Chrome daemon.
         pw.stop()
 
 
@@ -217,5 +217,5 @@ def fill(selector: str, value: str) -> dict[str, str]:
         page.bring_to_front()
         return {"title": page.title(), "url": page.url}
     finally:
-        browser.close()
+        # Disconnect Playwright without terminating the persistent Chrome daemon.
         pw.stop()
