@@ -397,8 +397,9 @@ def synth_stream(text: str, timeout: float = 30.0):
         except Exception as e:
             log(f"[mouth] elevenlabs failed ({str(e)[:60]}) — "
                 f"falling back to {CFG['voice']}")
-    for pcm in _stream_kokoro(text):
-        yield KOKORO_RATE, pcm
+    # _stream_kokoro already yields (sample_rate, pcm). Do not wrap it
+    # again or playback receives a nested tuple instead of a waveform.
+    yield from _stream_kokoro(text)
 
 
 class Mouth:
