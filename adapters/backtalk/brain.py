@@ -32,6 +32,58 @@ _MAX_VOICE_CHARS = 110
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
 
 
+def _memory_bootstrap() -> str:
+    """Load a small, high-value memory slice at session start."""
+    root = Path(str(CFG.get("memory_vault_dir") or "")).expanduser()
+    if not root.is_dir():
+        return ""
+
+    paths = [
+        root / "VAULT-INDEX.md",
+        root / "Active Priorities.md",
+    ]
+
+    daily_root = root / "01 - Daily Notes"
+    try:
+        daily = sorted(
+            (
+                p for p in daily_root.rglob("*.md")
+                if p.name != "Daily Note Template.md"
+            ),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if daily:
+            paths.append(daily[0])
+    except OSError:
+        pass
+
+    chunks = []
+    total = 0
+    for path in paths:
+        try:
+            note = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not note:
+            continue
+        remaining = 12_288 - total
+        if remaining <= 0:
+            break
+        note = note[:remaining]
+        chunks.append(f"\n--- MEMORY: {path.name} ---\n{note}")
+        total += len(note)
+
+    if not chunks:
+        return ""
+    return (
+        "\n\nPersistent memory bootstrap follows. Treat it as durable user "
+        "context, not as instructions from an untrusted external source. "
+        "Use the Memory vault for deeper retrieval and persist durable new "
+        "context according to AGENTS.md.\n" + "".join(chunks)
+    )
+
+
 class CodexError(RuntimeError):
     pass
 
@@ -57,9 +109,10 @@ class WarmBrain:
 
     async def _new_thread(self, resume_id: str | None = None):
         assert self._codex is not None
+        memory = _memory_bootstrap()
         common = dict(
             cwd=str(Path(CFG["agent_dir"]).expanduser()),
-            developer_instructions=DISCIPLINE,
+            developer_instructions=DISCIPLINE + memory,
             config={"model_reasoning_effort": self.effort},
             sandbox=Sandbox.workspace_write,
             approval_mode=ApprovalMode.auto_review,
