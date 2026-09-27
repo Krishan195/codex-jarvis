@@ -33,6 +33,7 @@ READ_ONLY_ACTIONS = {
     "browser.search",
     "browser.read",
     "browser.inspect",
+    "browser.upwork_jobs",
     "browser.login_window",
     "show",
 }
@@ -127,6 +128,10 @@ def _execute_readonly(action: str, payload: dict[str, Any]) -> Any:
     if action == "browser.inspect":
         return browserctl.inspect_interactive(
             min(int(payload.get("max_items") or 80), 120)
+        )
+    if action == "browser.upwork_jobs":
+        return browserctl.extract_upwork_jobs(
+            min(int(payload.get("max_items") or 40), 80)
         )
     if action == "browser.login_window":
         return browserctl.login_window(str(payload["url"]))
