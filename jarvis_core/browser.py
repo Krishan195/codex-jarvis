@@ -181,6 +181,57 @@ def _meta_content(page, selector: str) -> str:
         return ""
 
 
+def _image_candidates(page, max_items: int = 16) -> list[dict[str, Any]]:
+    """Return useful visible image candidates without dumping the whole DOM."""
+    rows: list[dict[str, Any]] = []
+    images = page.locator("img")
+    count = min(images.count(), 120)
+    for i in range(count):
+        img = images.nth(i)
+        try:
+            data = img.evaluate(
+                """e => {
+                    const r = e.getBoundingClientRect();
+                    const style = getComputedStyle(e);
+                    return {
+                        src: e.currentSrc || e.src || "",
+                        alt: e.alt || "",
+                        width: Math.round(r.width || e.naturalWidth || 0),
+                        height: Math.round(r.height || e.naturalHeight || 0),
+                        visible: style.display !== "none" &&
+                                 style.visibility !== "hidden" &&
+                                 r.width > 80 && r.height > 60
+                    };
+                }"""
+            )
+        except Exception:
+            continue
+        src = (data.get("src") or "").strip()
+        if not src or not data.get("visible"):
+            continue
+        if src.startswith("data:"):
+            continue
+        rows.append({
+            "src": src,
+            "alt": (data.get("alt") or "").strip()[:180],
+            "width": int(data.get("width") or 0),
+            "height": int(data.get("height") or 0),
+        })
+
+    # Prefer large images, but keep DOM order as a secondary signal.
+    rows.sort(key=lambda r: r["width"] * r["height"], reverse=True)
+    dedup: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if row["src"] in seen:
+            continue
+        seen.add(row["src"])
+        dedup.append(row)
+        if len(dedup) >= max_items:
+            break
+    return dedup
+
+
 def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
     pw, browser = _connect()
     try:
@@ -202,6 +253,7 @@ def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
             "url": page.url,
             "description": description or "",
             "image": image or "",
+            "images": _image_candidates(page),
             "text": text[:max_chars],
         }
     finally:
