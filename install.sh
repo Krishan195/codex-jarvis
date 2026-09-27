@@ -258,6 +258,15 @@ EOF
 chmod +x "$HOME/.local/bin/jarvis-broker"
 
 if [ "$(uname -s)" = "Linux" ]; then
+  old_freelance_db="$HOME/.local/share/codex-jarvis/freelance.sqlite3"
+  new_freelance_db="$HOME_DIR/.jarvis-data/freelance.sqlite3"
+  if [ -f "$old_freelance_db" ] && [ ! -e "$new_freelance_db" ]; then
+    say "Migrating freelance database into agent workspace..."
+    mkdir -p "$(dirname "$new_freelance_db")"
+    mv "$old_freelance_db" "$new_freelance_db"
+    chmod 600 "$new_freelance_db" || true
+  fi
+
   old_browser_profile="$HOME_DIR/BrowserProfile"
   new_browser_profile="$HOME/.local/share/codex-jarvis/browser-profile"
   if [ -d "$old_browser_profile" ] && [ ! -e "$new_browser_profile" ]; then
