@@ -428,26 +428,4 @@ ensure_block(
 """,
 )
 
-ensure_block(
-    vault / "02 - Projects" / "Codex Jarvis.md",
-    "<!-- JARVIS-ADVANCED-RUNTIME -->",
-    """<!-- JARVIS-ADVANCED-RUNTIME -->
-## Advanced runtime
-
-- Fast voice control stays on the Luna/low tier by default.
-- Explicit difficult work may route to isolated Terra/medium or Sol/high
-  specialist workers and return a compact result to the voice thread.
-- Substantial projects can use persistent project workers with separate Codex
-  threads and workspaces.
-- Memory Manager 2.0 keeps a local searchable index and supports health checks,
-  confirmed-memory capture, and archive-over-delete hygiene.
-- The safe automation scheduler supports reminders and allow-listed recurring
-  read-only workflows; it is not arbitrary shell cron.
-- Browser/desktop actions cross the trusted local control broker while the
-  voice Codex thread stays workspace-scoped.
-- Freelance Agent 2.0 records real application/outcome/effort data so future
-  shortlisting can improve from observed results.
-""",
-)
-
 print(f"[codex-jarvis] memory vault: {vault}")

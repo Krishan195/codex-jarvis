@@ -19,8 +19,8 @@ from typing import Any
 CDP_PORT = 9223
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 AGENT_HOME = Path.home() / "my-agent"
+PROFILE_DIR = AGENT_HOME / "BrowserProfile"
 STATE_DIR = Path.home() / ".local" / "share" / "codex-jarvis"
-PROFILE_DIR = STATE_DIR / "browser-profile"
 CURRENT_PAGE_FILE = STATE_DIR / "browser-current.json"
 
 

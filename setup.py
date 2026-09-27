@@ -40,10 +40,6 @@ defaults = {
     # Change these any time if more reasoning depth is worth the delay.
     "codex_model": "gpt-5.6-luna",
     "codex_effort": "low",
-    "codex_deep_model": "gpt-5.6-terra",
-    "codex_deep_effort": "medium",
-    "codex_expert_model": "gpt-5.6-sol",
-    "codex_expert_effort": "high",
 }
 changed = False
 for key, value in defaults.items():

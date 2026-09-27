@@ -9,7 +9,6 @@ import subprocess
 import sys
 
 from . import approvals
-from . import broker
 from . import browser as browserctl
 from . import credentials as credential_store
 from . import secrets
@@ -32,18 +31,6 @@ def _print_request(req: dict) -> None:
     print(f"Reject:  jarvis-core reject {req['id']}")
 
 
-def _user_service_state(name: str) -> str:
-    if not shutil.which("systemctl"):
-        return "unknown"
-    p = subprocess.run(
-        ["systemctl", "--user", "is-active", name],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return (p.stdout or p.stderr or "unknown").strip()
-
-
 def cmd_status(_args) -> int:
     print(f"Secret service: {'ready' if secrets.available() else 'missing'}")
     try:
@@ -57,16 +44,6 @@ def cmd_status(_args) -> int:
         print(f"Chrome/Chromium: {browserctl.chrome_binary()}")
     except Exception as exc:
         print(f"Chrome/Chromium: not ready ({exc})")
-    print(f"Control broker: {_user_service_state('jarvis-broker.service')}")
-    print(f"Automation scheduler: {_user_service_state('jarvis-scheduler.service')}")
-    try:
-        from .model_router import model_for
-        fast = model_for("fast")
-        deep = model_for("deep")
-        expert = model_for("expert")
-        print(f"Model router: fast={fast[0]}/{fast[1]} deep={deep[0]}/{deep[1]} expert={expert[0]}/{expert[1]}")
-    except Exception as exc:
-        print(f"Model router: not ready ({exc})")
     print(f"Pending approvals: {len(approvals.pending())}")
     return 0
 
@@ -142,9 +119,9 @@ def cmd_browser_daemon(_args) -> int:
 
 
 def cmd_browser_start(_args) -> int:
-    data = broker.submit("browser.start")
+    browserctl.ensure_started()
     print("Jarvis browser is ready.")
-    print(f"Persistent profile: {data.get('profile', browserctl.PROFILE_DIR)}")
+    print(f"Persistent profile: {browserctl.PROFILE_DIR}")
     return 0
 
 
@@ -159,49 +136,36 @@ def cmd_browser_stop(_args) -> int:
 
 
 def cmd_browser_open(args) -> int:
-    data = broker.submit("browser.open", {"url": args.url})
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    print(json.dumps(browserctl.open_url(args.url), indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_browser_search(args) -> int:
-    data = broker.submit("browser.search", {"query": args.query})
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    print(json.dumps(browserctl.search(args.query), indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_browser_read(args) -> int:
-    data = broker.submit(
-        "browser.read",
-        {"url": args.url, "max_chars": args.max_chars},
-    )
+    data = browserctl.read_page(args.url, max_chars=args.max_chars)
     print(json.dumps(data, indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_browser_inspect(args) -> int:
-    data = broker.submit("browser.inspect", {"max_items": args.max_items})
+    data = browserctl.inspect_interactive(args.max_items)
     print(json.dumps(data, indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_browser_login_window(args) -> int:
-    data = broker.submit("browser.login_window", {"url": args.url})
+    data = browserctl.login_window(args.url)
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print("Complete login manually in the Jarvis browser. The dedicated profile keeps the session.")
     return 0
 
 
 def cmd_show(args) -> int:
-    broker.submit(
-        "show",
-        {
-            "title": args.title,
-            "description": args.description,
-            "image_url": args.image_url,
-            "source_url": args.source_url,
-        },
-    )
+    showcase.spawn(args.title, args.description, args.image_url, args.source_url)
     print("Visual card opened.")
     return 0
 
@@ -210,31 +174,25 @@ def cmd_request_email(args) -> int:
     body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else args.body
     if not body:
         raise SystemExit("Email body is required.")
-    req = broker.submit(
-        "approval.propose",
-        {
-            "action": "gmail.send",
-            "summary": f"Send email to {args.to} with subject {args.subject!r}",
-            "payload": {"to": args.to, "subject": args.subject, "body": body},
-        },
+    req = approvals.propose(
+        "gmail.send",
+        f"Send email to {args.to} with subject {args.subject!r}",
+        {"to": args.to, "subject": args.subject, "body": body},
     )
     _print_request(req)
     return 0
 
 
 def cmd_request_event(args) -> int:
-    req = broker.submit(
-        "approval.propose",
+    req = approvals.propose(
+        "calendar.create",
+        f"Create calendar event {args.summary!r} from {args.start} to {args.end}",
         {
-            "action": "calendar.create",
-            "summary": f"Create calendar event {args.summary!r} from {args.start} to {args.end}",
-            "payload": {
-                "summary": args.summary,
-                "start": args.start,
-                "end": args.end,
-                "description": args.description or "",
-                "location": args.location or "",
-            },
+            "summary": args.summary,
+            "start": args.start,
+            "end": args.end,
+            "description": args.description or "",
+            "location": args.location or "",
         },
     )
     _print_request(req)
@@ -243,18 +201,15 @@ def cmd_request_event(args) -> int:
 
 def cmd_request_browser_login(args) -> int:
     # The password itself is never copied into the approval request.
-    req = broker.submit(
-        "approval.propose",
+    req = approvals.propose(
+        "browser.login",
+        f"Sign in to {args.site} at {args.url} using its stored credential",
         {
-            "action": "browser.login",
-            "summary": f"Sign in to {args.site} at {args.url} using its stored credential",
-            "payload": {
-                "site": args.site,
-                "url": args.url,
-                "username_selector": args.username_selector,
-                "password_selector": args.password_selector,
-                "submit_selector": args.submit_selector or "",
-            },
+            "site": args.site,
+            "url": args.url,
+            "username_selector": args.username_selector,
+            "password_selector": args.password_selector,
+            "submit_selector": args.submit_selector or "",
         },
     )
     _print_request(req)
@@ -262,13 +217,10 @@ def cmd_request_browser_login(args) -> int:
 
 
 def cmd_request_browser_click(args) -> int:
-    req = broker.submit(
-        "approval.propose",
-        {
-            "action": "browser.click",
-            "summary": f"Click browser element {args.selector!r} on the active page",
-            "payload": {"selector": args.selector},
-        },
+    req = approvals.propose(
+        "browser.click",
+        f"Click browser element {args.selector!r} on the active page",
+        {"selector": args.selector},
     )
     _print_request(req)
     return 0
@@ -276,13 +228,10 @@ def cmd_request_browser_click(args) -> int:
 
 def cmd_request_system(args) -> int:
     # Show the exact command in the approval summary. No hidden command payload.
-    req = broker.submit(
-        "approval.propose",
-        {
-            "action": "system.exec",
-            "summary": f"Run Ubuntu command exactly as shown: {args.command}",
-            "payload": {"command": args.command},
-        },
+    req = approvals.propose(
+        "system.exec",
+        f"Run Ubuntu command exactly as shown: {args.command}",
+        {"command": args.command},
     )
     _print_request(req)
     return 0
@@ -312,19 +261,60 @@ def cmd_pending(_args) -> int:
 
 
 def cmd_execute(args) -> int:
-    result = broker.submit(
-        "approved.execute",
-        {"approval_id": args.request_id},
-        timeout=150.0,
-    )
-    detail = result.get("detail", "Approved action executed.")
-    print(f"Executed {args.request_id}: {detail}")
-    payload = result.get("result")
-    if isinstance(payload, dict) and "returncode" in payload:
-        if payload.get("stdout"):
-            print(payload["stdout"], end="" if payload["stdout"].endswith("\n") else "\n")
-        if payload.get("stderr"):
-            print(payload["stderr"], file=sys.stderr, end="" if payload["stderr"].endswith("\n") else "\n")
+    req = approvals.claim(args.request_id)
+    try:
+        if req["action"] == "gmail.send":
+            p = req["payload"]
+            result = send_email(p["to"], p["subject"], p["body"])
+            detail = f"Gmail message id {result.get('id', '(unknown)')}"
+
+        elif req["action"] == "calendar.create":
+            p = req["payload"]
+            result = create_event(
+                p["summary"], p["start"], p["end"],
+                p.get("description", ""), p.get("location", ""),
+            )
+            detail = f"Calendar event id {result.get('id', '(unknown)')}"
+
+        elif req["action"] == "browser.login":
+            p = req["payload"]
+            username, password = credential_store.get_credential(p["site"])
+            result = browserctl.login_with_credential(
+                p["url"],
+                username,
+                password,
+                p["username_selector"],
+                p["password_selector"],
+                p.get("submit_selector") or None,
+            )
+            detail = f"Browser login action completed at {result.get('url', '')}"
+
+        elif req["action"] == "browser.click":
+            p = req["payload"]
+            result = browserctl.click(p["selector"])
+            detail = f"Browser click completed at {result.get('url', '')}"
+
+        elif req["action"] == "system.exec":
+            p = req["payload"]
+            result = system_access.run(p["command"])
+            detail = (
+                f"Ubuntu command rc={result['returncode']}\n"
+                f"stdout:\n{result['stdout']}\n"
+                f"stderr:\n{result['stderr']}"
+            )
+            if result["returncode"] != 0:
+                raise RuntimeError(detail)
+            print(detail)
+
+        else:
+            raise RuntimeError(f"Unsupported action: {req['action']}")
+    except Exception as exc:
+        approvals.mark_result(req["id"], False, str(exc))
+        raise
+
+    approvals.mark_result(req["id"], True, detail)
+    if req["action"] != "system.exec":
+        print(f"Executed {req['id']}: {detail}")
     return 0
 
 
