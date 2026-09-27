@@ -9,12 +9,12 @@ A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 - OpenAI Codex CLI is the agent brain.
 - It uses the user's existing Codex CLI authentication, including ChatGPT-plan login.
 - Backtalk's local faster-whisper speech recognition is retained.
-- Local Kokoro speech output is retained, with a `kokoro-onnx` FP16 CPU path preferred for lower latency on older Intel CPUs and the original PyTorch backend kept as fallback.
+- Local Kokoro speech output is retained, with a `kokoro-onnx` FP32 CPU path preferred for lower latency on 10th-gen-class Intel CPUs and the original PyTorch backend kept as fallback.
 - The existing Backtalk signal bus drives Jared's AI Visualizer.
 - Codex thread IDs are saved and resumed across voice turns.
 - No OpenAI API key is required for this core path.
 
-The current bridge keeps a persistent Codex app-server session alive and streams agent-message deltas into the voice pipeline. Replies are chunked at natural sentence/clause boundaries, then prefetched through a Kokoro ONNX FP16 CPU backend so synthesis can overlap playback. The original PyTorch Kokoro path remains available as a fallback.
+The current bridge keeps a persistent Codex app-server session alive and streams agent-message deltas into the voice pipeline. Replies are chunked at natural sentence/clause boundaries, then prefetched through a Kokoro ONNX FP32 CPU backend so synthesis can overlap playback. The original PyTorch Kokoro path remains available as a fallback.
 
 ## Architecture
 
