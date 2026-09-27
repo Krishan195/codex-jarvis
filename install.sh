@@ -102,6 +102,7 @@ else
 fi
 python3 "$ROOT/tools/update_agent_personality.py" "$ROOT/AGENTS.md" "$HOME_DIR/AGENTS.md"
 
+python3 "$ROOT/tools/setup_memory.py" "$HOME_DIR"
 python3 "$ROOT/setup.py"
 
 
@@ -167,5 +168,28 @@ say "Running Backtalk's dependency installer."
   ./install.sh
 )
 
-say "Phase-1 installation finished."
-say "Run: cd $ROOT && bash start.sh"
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$ROOT/start.sh" "$HOME/.local/bin/jarvis"
+
+if [ "$(uname -s)" = "Linux" ]; then
+  desktop_dir="$HOME/Desktop"
+  mkdir -p "$desktop_dir"
+  cat > "$desktop_dir/Jarvis.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Jarvis
+Comment=Start Codex Jarvis
+Exec=bash -lc 'cd "$ROOT" && exec bash start.sh'
+Terminal=true
+Categories=Utility;
+EOF
+  chmod +x "$desktop_dir/Jarvis.desktop"
+  if command -v gio >/dev/null 2>&1; then
+    gio set "$desktop_dir/Jarvis.desktop" metadata::trusted true >/dev/null 2>&1 || true
+  fi
+fi
+
+say "Personal MVP installation finished."
+say "Memory vault: $HOME_DIR/Memory"
+say "Start with: jarvis"
+say "Or double-click: $HOME/Desktop/Jarvis.desktop"
