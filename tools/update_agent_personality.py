@@ -25,6 +25,11 @@ BLOCKS = [
         "<!-- CODEX-JARVIS-FREELANCE-END -->",
         "Jarvis freelance agent",
     ),
+    (
+        "<!-- CODEX-JARVIS-ADVANCED-START -->",
+        "<!-- CODEX-JARVIS-ADVANCED-END -->",
+        "Jarvis advanced operating modes",
+    ),
 ]
 
 if len(sys.argv) != 3:
