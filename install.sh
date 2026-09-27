@@ -169,7 +169,12 @@ say "Running Backtalk's dependency installer."
 )
 
 mkdir -p "$HOME/.local/bin"
-ln -sfn "$ROOT/start.sh" "$HOME/.local/bin/jarvis"
+cat > "$HOME/.local/bin/jarvis" <<EOF
+#!/usr/bin/env bash
+cd "$ROOT"
+exec bash start.sh "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis"
 
 if [ "$(uname -s)" = "Linux" ]; then
   desktop_dir="$HOME/Desktop"
