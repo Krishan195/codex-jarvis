@@ -65,8 +65,8 @@ _onnx_pipe = None
 _pipe_lock = threading.Lock()
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
-_ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.int8.onnx"
-_ONNX_VOICES = _MODEL_DIR / "voices-v1.0.bin"
+_ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.fp16.v1.1.onnx"
+_ONNX_VOICES = _MODEL_DIR / "voices-v1.0.v1.1.bin"
 
 
 def _ensure_espeak():
@@ -181,13 +181,29 @@ def warm():
 
         if _ONNX_MODEL.exists() and _ONNX_VOICES.exists():
             try:
+                import onnxruntime as ort
                 from kokoro_onnx import Kokoro
-                log(
-                    f"[mouth] loading Kokoro ONNX int8 "
-                    f"(voice {CFG['voice']})..."
+
+                # The official kokoro-onnx example recommends explicitly
+                # sizing the CPU inference thread pool. This T14 class of CPU
+                # benefits from using all logical cores for one synthesis job.
+                sess_options = ort.SessionOptions()
+                cpu_threads = max(1, os.cpu_count() or 1)
+                sess_options.intra_op_num_threads = cpu_threads
+                session = ort.InferenceSession(
+                    str(_ONNX_MODEL),
+                    providers=["CPUExecutionProvider"],
+                    sess_options=sess_options,
                 )
-                _onnx_pipe = Kokoro(str(_ONNX_MODEL), str(_ONNX_VOICES))
-                log("[mouth] voice ready (kokoro-onnx int8)")
+
+                log(
+                    f"[mouth] loading Kokoro ONNX fp16 "
+                    f"(voice {CFG['voice']}, threads={cpu_threads})..."
+                )
+                _onnx_pipe = Kokoro.from_session(
+                    session, str(_ONNX_VOICES)
+                )
+                log("[mouth] voice ready (kokoro-onnx fp16)")
                 return _onnx_pipe
             except Exception as exc:
                 log(
@@ -228,10 +244,15 @@ def _stream_kokoro(text: str):
             voice=CFG["voice"],
             speed=speed,
             lang=_voice_lang(CFG["voice"]),
+            trim=True,
         )
-        a = np.asarray(audio, dtype=np.float32)
+        # Some Kokoro ONNX exports return mono waveform as shape (1, N)
+        # rather than (N,). sounddevice expects mono as a flat vector;
+        # handing it (1, N) is what caused the "inhomogeneous shape" error.
+        a = np.asarray(audio, dtype=np.float32).reshape(-1)
         if a.size:
-            yield rate, (np.clip(a, -1.0, 1.0) * 32767).astype(np.int16)
+            pcm = (np.clip(a, -1.0, 1.0) * 32767).astype(np.int16)
+            yield int(rate), pcm
         return
 
     # Original PyTorch fallback.
