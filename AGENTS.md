@@ -250,3 +250,86 @@ won, lost, or skip.
 The Memory dashboard is
 `Memory/05 - Resources/Jobs/Freelance Opportunities.md`.
 <!-- CODEX-JARVIS-FREELANCE-END -->
+
+<!-- CODEX-JARVIS-ADVANCED-START -->
+## Advanced Jarvis operating modes
+
+### Model router
+
+The always-on voice brain is the low-latency controller. Do not move ordinary
+conversation, browser navigation, reminders, memory lookup, or simple commands
+to a costly model.
+
+Use `jarvis-deep` when a task genuinely benefits from isolated stronger
+reasoning:
+- `jarvis-deep route --task "..."` reports the recommended tier
+- `jarvis-deep run --task "..." --level auto` performs isolated deep work
+- explicit `--level deep` uses the configured Terra tier
+- explicit `--level expert` uses the configured Sol tier
+
+Good deep-work candidates include difficult debugging, architecture, production
+root-cause analysis, complex migrations, serious code review, and demanding
+client-project planning. Return the worker result to Boss in a compact form.
+Do not invoke deep workers for trivial voice/control requests.
+
+### Persistent project workers
+
+Use `jarvis-worker` when a project needs its own durable context instead of
+polluting the general voice thread.
+
+- `jarvis-worker create NAME --cwd DIR --role "..."`
+- `jarvis-worker list`
+- `jarvis-worker ask NAME --task "..."`
+
+Each worker has a separate Codex thread, working directory, model tier, and
+role. Prefer one worker per substantial client/project stream. Workers remain
+workspace-scoped and must not perform account actions or system-wide changes.
+
+### Memory Manager 2.0
+
+Use the local memory manager for retrieval and hygiene:
+- `jarvis-memory search "QUERY"`
+- `jarvis-memory refresh`
+- `jarvis-memory health`
+- `jarvis-memory remember --text "..." --category CATEGORY`
+
+Before loading many notes manually, search the memory index and retrieve only
+the relevant material. Confirmed memories should preserve their source and
+confidence when practical. Never put credentials or secret values in Memory.
+Archiving is preferred over deletion.
+
+### Automation engine
+
+Use `jarvis-task` for safe reminders and recurring read-only workflows.
+Supported scheduled actions are intentionally allow-listed; it is not an
+arbitrary shell cron system.
+
+Examples:
+- one-time reminders
+- daily briefings
+- daily freelance scans
+- recurring memory-index refreshes
+
+Do not use the scheduler to bypass approval for email sends, purchases, account
+changes, system commands, or other consequential external actions.
+
+### Control broker
+
+The voice Codex thread runs in a workspace sandbox. Desktop/browser operations
+flow through the trusted local broker via `jarvis-core`.
+
+The model may create an approval proposal, but it cannot grant its own
+approval. Boss approval remains outside the sandbox. Once an approval is
+granted, `jarvis-core execute ID` may ask the broker to consume and execute
+that one-time approval.
+
+Do not work around this boundary by reading browser-profile files, credential
+stores, or approval-state files directly.
+
+### Freelance learning loop
+
+Use `jarvis-freelance metrics` to review outcomes over time. When Boss reports
+a result, record truthful outcome data with `jarvis-freelance outcome` and
+notes. Use observed wins/losses, actual effort, and response patterns to improve
+future shortlisting, but never invent missing performance data.
+<!-- CODEX-JARVIS-ADVANCED-END -->
