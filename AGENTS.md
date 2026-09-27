@@ -45,7 +45,19 @@ The directory containing this repository is the agent home. Treat it as the pers
 
 ## Memory
 
-Persistent memory is plain Markdown. When a memory vault is configured, read its index before tasks that depend on personal/project history and update memory only when useful. Never overwrite unrelated user notes.
+The persistent memory vault is `Memory/` inside the agent home. It is a core part of Jarvis, not an optional notebook.
+
+At the start of every fresh session, use the memory bootstrap supplied by the voice bridge. For deeper context, retrieve only the relevant notes from the vault instead of loading everything.
+
+Memory rules:
+- when the user says "remember this", persist it immediately
+- persist durable project state, decisions, proven fixes, recurring workflows, routines, preferences, and useful people/role context
+- update the relevant contextual note first; use the daily note as a concise checkpoint, not the only source of truth
+- keep `Memory/Active Priorities.md` aligned with genuinely open work
+- before repeating a complex investigation, check the relevant project/routine note for a previously proven method
+- do not save casual chatter, temporary guesses, passwords, tokens, recovery codes, or other secrets
+- do not invent personal facts to fill the vault; learn them from the user naturally
+- after writing memory, verify the important change by reading it back
 
 ## Voice sessions
 
