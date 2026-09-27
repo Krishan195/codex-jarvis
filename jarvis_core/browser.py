@@ -53,6 +53,10 @@ def daemon() -> None:
     """Exec a dedicated, persistent, user-visible Chrome process."""
     binary = chrome_binary()
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(PROFILE_DIR, 0o700)
+    except OSError:
+        pass
     args = [
         binary,
         f"--remote-debugging-port={CDP_PORT}",
@@ -134,6 +138,16 @@ def search(query: str) -> dict[str, str]:
     )
 
 
+def _meta_content(page, selector: str) -> str:
+    loc = page.locator(selector)
+    if loc.count() < 1:
+        return ""
+    try:
+        return loc.first.get_attribute("content", timeout=1000) or ""
+    except Exception:
+        return ""
+
+
 def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
     pw, browser = _connect()
     try:
@@ -144,10 +158,10 @@ def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.bring_to_front()
         title = page.title()
-        description = page.locator('meta[name="description"]').get_attribute("content")
+        description = _meta_content(page, 'meta[name="description"]')
         if not description:
-            description = page.locator('meta[property="og:description"]').get_attribute("content")
-        image = page.locator('meta[property="og:image"]').get_attribute("content")
+            description = _meta_content(page, 'meta[property="og:description"]')
+        image = _meta_content(page, 'meta[property="og:image"]')
         text = page.locator("body").inner_text(timeout=10000)
         return {
             "title": title,
