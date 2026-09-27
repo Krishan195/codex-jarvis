@@ -2,7 +2,7 @@
 
 A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 
-> **Status:** early alpha. Linux-first while the Codex voice bridge is being ported and tested.
+> **Status:** working Linux alpha. Voice + face are functional; memory, hands, packaging, and polish are still being completed.
 
 ## What works in the current alpha
 
@@ -14,7 +14,7 @@ A Codex-native adaptation of Jared Rhodenizer's open-source Jarvis stack.
 - Codex thread IDs are saved and resumed across voice turns.
 - No OpenAI API key is required for this core path.
 
-The first bridge uses `codex exec --json`. Because that interface emits the completed agent message rather than token-by-token assistant text, first-audio latency is not yet as low as Jared's Claude Agent SDK implementation. The next transport milestone is Codex app-server streaming.
+The current bridge keeps a persistent Codex app-server session alive and streams agent-message deltas into the voice pipeline. Replies are chunked at natural sentence/clause boundaries, then prefetched through local Kokoro TTS so generation can overlap playback.
 
 ## Architecture
 
@@ -68,7 +68,7 @@ The installer places Jared's components beside this repository in the same agent
 Default alpha configuration:
 
 - agent name: Jarvis
-- push-to-talk key: Home
+- push-to-talk key: `V` on Wayland (browser-focused visualizer bridge)
 - local voice: `bm_lewis`
 - STT model: `small.en`
 - face: circuit board
@@ -77,12 +77,13 @@ Default alpha configuration:
 
 ## Roadmap
 
-1. **Codex brain** — current alpha using `codex exec --json`.
-2. **Streaming transport** — Codex app-server for lower first-audio latency and native approval/tool events.
-3. **Memory** — adapt the AI Memory Vault boot instructions from `CLAUDE.md` to `AGENTS.md`.
-4. **Hands** — wire Barehands into the same signal/state path.
-5. **Realtime option** — optional lower-cost realtime voice provider, while keeping local voice as the default.
-6. **Installer UX** — one-question-at-a-time setup similar to Jared's original fullstack installer.
+1. **Voice latency/polish** — tune clause streaming, Kokoro prefetch, interruption, and timing telemetry.
+2. **Memory** — adapt the AI Memory Vault boot instructions from `CLAUDE.md` to `AGENTS.md`.
+3. **Hands** — wire Barehands into the same signal/state path.
+4. **Permissions** — expose Codex approval events cleanly in voice sessions.
+5. **Wayland input** — move from the focused-browser key bridge to an optional desktop-native hotkey path.
+6. **Installer/update UX** — reliable upgrade path, self-test, diagnostics, and desktop launchers.
+7. **Tests + packaging** — regression tests for voice, config migrations, and upstream compatibility.
 
 ## Upstream projects and credit
 
