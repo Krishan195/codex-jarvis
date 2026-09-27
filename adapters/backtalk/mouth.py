@@ -347,6 +347,7 @@ class Mouth:
         self._synthing = threading.Event()
         self._generation = 0
         self._generation_lock = threading.Lock()
+        self._last_audio_end: float | None = None
         # The one persistent output stream (audio law #1).
         # Playback-thread-only — never touch from other threads.
         self._out: sd.OutputStream | None = None
@@ -464,8 +465,14 @@ class Mouth:
             signals.static_stop()
             signals.set_state("speaking")
             try:
-                log(f"[latency] tts-prefetch={synth_ms}ms ready={self._audio_q.qsize()}")
+                now = time.monotonic()
+                gap_ms = 0 if self._last_audio_end is None else int((now - self._last_audio_end) * 1000)
+                log(
+                    f"[latency] tts-prefetch={synth_ms}ms "
+                    f"ready={self._audio_q.qsize()} speech-gap={gap_ms}ms"
+                )
                 self._play_chunks(chunks, directions)
+                self._last_audio_end = time.monotonic()
             except Exception as e:
                 log(f"[mouth] synth/play error: {e}")
             finally:
