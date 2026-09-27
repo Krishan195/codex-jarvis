@@ -264,12 +264,21 @@ After Google OAuth is configured:
 
 ```bash
 jarvis-freelance scan-email --days 7
+jarvis-freelance review --max-jobs 5
 jarvis-freelance digest
 ```
 
 The installer creates a daily 08:30 user timer that scans the user's own Upwork
-job-alert email. It is enabled together with the morning briefing after Google
-OAuth succeeds.
+job-alert email, asks Codex to review up to five new opportunities, stores
+fit reasoning and truthful proposal drafts, and notifies the user about the
+shortlist. It is enabled together with the morning briefing after Google OAuth
+succeeds.
+
+Run the same workflow manually with:
+
+```bash
+jarvis-freelance daily --days 3 --max-jobs 5 --notify
+```
 
 ### Analyze and prepare a proposal
 
@@ -283,6 +292,10 @@ jarvis-freelance proposal-save 12 --file /tmp/proposal.txt
 Jarvis can perform these steps from the voice session after reading the actual
 job. Proposal drafts must remain truthful: no invented certifications,
 experience, portfolio items, or outcomes.
+
+Jarvis uses `Memory/02 - Projects/Freelance Profile.md` as the source of
+truth for claims it is allowed to make in proposal drafts. Keep that file
+factual; studying/in-progress items should never be presented as completed.
 
 ### Start delivery work
 
