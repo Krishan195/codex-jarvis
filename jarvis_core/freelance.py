@@ -682,6 +682,34 @@ def cmd_review(args) -> int:
     return 0
 
 
+def cmd_daily(args) -> int:
+    scan = scan_email(args.days, args.max_results)
+    reviews = review_new(args.max_jobs)
+    write_memory_report()
+
+    shortlisted = [r for r in reviews if r["shortlist"]]
+    print(
+        f"Daily freelance run: {scan['added']} new alerts, "
+        f"{len(reviews)} reviewed, {len(shortlisted)} shortlisted."
+    )
+    for row in sorted(shortlisted, key=lambda r: r["score"], reverse=True):
+        print(f"  #{row['id']} fit={row['score']} {row['title']}")
+
+    if args.notify:
+        if shortlisted:
+            top = sorted(shortlisted, key=lambda r: r["score"], reverse=True)[:3]
+            msg = "Freelance shortlist: " + "; ".join(
+                f"#{r['id']} {r['title']} ({r['score']})" for r in top
+            )
+        else:
+            msg = (
+                f"Freelance scan complete: {scan['added']} new alerts, "
+                "no new shortlist picks."
+            )
+        notify(msg)
+    return 0
+
+
 def cmd_digest(args) -> int:
     text = digest_text(args.limit)
     write_memory_report()
@@ -746,6 +774,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-jobs", type=int, default=5)
     s.add_argument("--notify", action="store_true")
     s.set_defaults(func=cmd_review)
+
+    s = sub.add_parser("daily")
+    s.add_argument("--days", type=int, default=3)
+    s.add_argument("--max-results", type=int, default=50)
+    s.add_argument("--max-jobs", type=int, default=5)
+    s.add_argument("--notify", action="store_true")
+    s.set_defaults(func=cmd_daily)
 
     s = sub.add_parser("digest")
     s.add_argument("--limit", type=int, default=10)
