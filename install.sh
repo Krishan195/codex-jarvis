@@ -86,6 +86,11 @@ if not any("kokoro-onnx" in line for line in lines):
         if line.strip() == "dependencies = [":
             lines.insert(i + 1, '    "kokoro-onnx>=0.6.1",')
             break
+if not any("piper-tts" in line for line in lines):
+    for i, line in enumerate(lines):
+        if line.strip() == "dependencies = [":
+            lines.insert(i + 1, '    "piper-tts",')
+            break
 p.write_text("\n".join(lines) + "\n")
 PY
 
@@ -99,6 +104,34 @@ python3 "$ROOT/tools/update_agent_personality.py" "$ROOT/AGENTS.md" "$HOME_DIR/A
 
 python3 "$ROOT/setup.py"
 
+
+
+say "Preparing low-latency Piper voice..."
+python3 - "$HOME_DIR/backtalk/models" <<'PY'
+from pathlib import Path
+from urllib.request import urlretrieve
+import sys
+
+dest = Path(sys.argv[1])
+dest.mkdir(parents=True, exist_ok=True)
+
+assets = {
+    "en_GB-alan-medium.onnx":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx?download=true",
+    "en_GB-alan-medium.onnx.json":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json?download=true",
+}
+
+for name, url in assets.items():
+    path = dest / name
+    if path.exists() and path.stat().st_size > 1024:
+        print(f"[codex-jarvis] {name} already present.")
+        continue
+    tmp = path.with_suffix(path.suffix + ".part")
+    print(f"[codex-jarvis] downloading {name} (one-time)...")
+    urlretrieve(url, tmp)
+    tmp.replace(path)
+PY
 
 say "Preparing low-latency Kokoro ONNX fp32 model..."
 python3 - "$HOME_DIR/backtalk/models" <<'PY'
