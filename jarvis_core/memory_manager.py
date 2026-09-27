@@ -44,7 +44,7 @@ def _connect() -> sqlite3.Connection:
         conn.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
-            USING fts5(path UNINDEXED, title, body, content='')
+            USING fts5(path UNINDEXED, title, body)
             """
         )
     except sqlite3.OperationalError:
