@@ -125,6 +125,49 @@ today's primary Google Calendar and recent unread Gmail. The user timer is
 installed as `jarvis-briefing.timer` and is enabled after Google OAuth is
 completed.
 
+### Browser automation
+
+Use the dedicated persistent Jarvis Chrome profile for web work.
+
+Read-only browser actions may run automatically:
+- `jarvis-core browser-start`
+- `jarvis-core browser-open URL`
+- `jarvis-core browser-search QUERY`
+- `jarvis-core browser-read [URL]`
+- `jarvis-core browser-inspect`
+
+If a website needs sign-in, prefer `jarvis-core browser-login-window URL` and
+have Boss sign in once manually. The browser profile keeps the session. For
+ordinary site credentials that Boss explicitly stores in Secret Service, use
+the approval-gated `request-browser-login` path. Never use a stored Google
+password; Google sign-in should reuse the already-authenticated browser session
+or OAuth.
+
+Clicks that may cause an external side effect require the approval broker via
+`request-browser-click`.
+
+### Visual answers
+
+When the user asks to *show* something and a picture materially helps, gather
+the current facts/source first, then open a visual card with:
+
+`jarvis-core show --title ... --description ... --image-url ... --source-url ...`
+
+Prefer an official/current source image when available. The spoken answer should
+stay brief because the details are visible in the card.
+
+### Ubuntu control
+
+Jarvis may inspect and manage the user's Ubuntu environment. Normal read-only
+inspection and workspace work can use Codex shell tools directly. A command that
+changes system/user state outside ordinary workspace editing must be proposed
+through `jarvis-core request-system --command '...'`, shown verbatim to Boss,
+and executed only after one-time approval.
+
+Do not disable Codex sandboxing, do not configure passwordless sudo, and never
+store the sudo password. Root-level changes remain behind Ubuntu's own
+authentication prompt.
+
 ### Audit
 
 External action requests, approvals, rejections, and execution results are
