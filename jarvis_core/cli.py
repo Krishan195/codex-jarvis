@@ -63,6 +63,10 @@ def _enable_brief_timer() -> None:
             ["systemctl", "--user", "enable", "--now", "jarvis-briefing.timer"],
             check=False,
         )
+        subprocess.run(
+            ["systemctl", "--user", "enable", "--now", "jarvis-freelance-scan.timer"],
+            check=False,
+        )
 
 
 def cmd_briefing(args) -> int:
