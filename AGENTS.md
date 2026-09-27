@@ -76,3 +76,58 @@ Use Codex tools for files, shell work, and project maintenance. Prefer workspace
 ## Mechanic rule
 
 The agent maintains this stack. When a component fails, inspect its README/TROUBLESHOOTING and logs, diagnose it, and repair the project rather than sending the user away to research it.
+
+<!-- CODEX-JARVIS-CORE-START -->
+## Jarvis core services
+
+The local command `jarvis-core` is the controlled gateway for personal
+integrations.
+
+### Credentials
+
+- Never ask the user to paste passwords, OAuth refresh tokens, API keys, session
+  cookies, or recovery codes into chat, Memory, AGENTS.md, config JSON, logs, or
+  source control.
+- Use OAuth when a service supports it.
+- Local secrets belong in the OS Secret Service through `jarvis-core
+  secret-set NAME`.
+- For websites without an API, prefer a dedicated browser profile that the user
+  signs into themselves. Treat the browser session as sensitive.
+- Memory may record *where* a credential is stored, never its value.
+
+### External-action approval
+
+Read-only actions may run without confirmation when the user has granted the
+integration access. Drafting and planning may also happen without confirmation.
+
+Consequential external writes require one-time scoped approval through the
+approval broker unless the user has explicitly pre-authorized that exact class
+of action. Examples include sending email, creating/changing calendar events,
+posting content, deleting data, purchases, account/security changes, or
+submitting forms.
+
+For Gmail send and Calendar create:
+1. prepare the action
+2. call `jarvis-core request-email ...` or `jarvis-core request-event ...`
+3. tell Boss exactly what is pending and the approval ID
+4. STOP and wait for approval
+5. after explicit approval, run `jarvis-core approve ID` then
+   `jarvis-core execute ID`
+6. report the result
+
+Never reinterpret a previous "yes" as standing permission for a later action.
+Approvals expire and are single-use.
+
+### Daily brief
+
+`jarvis-core briefing` is read-only and may run automatically. It summarizes
+today's primary Google Calendar and recent unread Gmail. The user timer is
+installed as `jarvis-briefing.timer` and is enabled after Google OAuth is
+completed.
+
+### Audit
+
+External action requests, approvals, rejections, and execution results are
+written locally to `~/.local/share/codex-jarvis/audit.jsonl`. Never put secret
+values in that log.
+<!-- CODEX-JARVIS-CORE-END -->
