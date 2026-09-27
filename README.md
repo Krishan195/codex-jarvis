@@ -315,3 +315,45 @@ human-readable dashboard is written to:
 ```text
 Memory/05 - Resources/Jobs/Freelance Opportunities.md
 ```
+
+
+## Binance market-analysis specialist
+
+`jarvis-binance` is a lightweight, on-demand Binance market-analysis module.
+It does not change the normal Luna voice model or add background workers, so
+ordinary Jarvis response latency stays as it was.
+
+It uses current public Binance market data and calculates trend/momentum,
+EMA 20/50, RSI, MACD, ATR, Bollinger Bands, VWAP, volume participation, taker
+buy flow, spread, order-book imbalance, support/resistance, and 24-hour market
+context. USD-M futures analysis also attempts to include mark price, funding,
+and open interest.
+
+Install/update only this feature without rerunning the full Jarvis installer:
+
+```bash
+cd ~/my-agent/codex-jarvis
+git pull
+bash tools/install_binance_expert.sh
+```
+
+Examples:
+
+```bash
+jarvis-binance quote BTCUSDT --market spot
+jarvis-binance analyze BTCUSDT --market futures --interval 15m
+jarvis-binance multi BTCUSDT --market futures --intervals 15m,1h,4h
+```
+
+A local simulation ledger is also available:
+
+```bash
+jarvis-binance paper-open BTCUSDT --market futures --side long --quantity 0.001 --leverage 5
+jarvis-binance positions
+jarvis-binance paper-close 1
+jarvis-binance stats
+```
+
+The built-in module contains no live-account order execution and stores no
+Binance API secret. Paper history is kept locally under Jarvis application
+data.
