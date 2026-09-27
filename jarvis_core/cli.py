@@ -109,6 +109,11 @@ def cmd_credential_delete(args) -> int:
     return 0
 
 
+def cmd_browser_daemon(_args) -> int:
+    browserctl.daemon()
+    return 0
+
+
 def cmd_browser_start(_args) -> int:
     browserctl.ensure_started()
     print("Jarvis browser is ready.")
@@ -341,6 +346,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("credential-delete")
     s.add_argument("site")
     s.set_defaults(func=cmd_credential_delete)
+
+    s = sub.add_parser("browser-daemon", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_browser_daemon)
 
     s = sub.add_parser("browser-start")
     s.set_defaults(func=cmd_browser_start)
