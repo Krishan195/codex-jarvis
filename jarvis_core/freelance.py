@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 import re
 import sqlite3
 import shutil
@@ -19,12 +20,14 @@ import subprocess
 import sys
 from typing import Any
 
+from . import broker
 from . import browser as browserctl
 from .google_workspace import GoogleNotConnected, search_messages
 
 STATE_DIR = Path.home() / ".local" / "share" / "codex-jarvis"
-DB_PATH = STATE_DIR / "freelance.sqlite3"
 AGENT_HOME = Path.home() / "my-agent"
+DATA_DIR = AGENT_HOME / ".jarvis-data"
+DB_PATH = DATA_DIR / "freelance.sqlite3"
 MEMORY_REPORT = AGENT_HOME / "Memory" / "05 - Resources" / "Jobs" / "Freelance Opportunities.md"
 WORKSPACE_ROOT = AGENT_HOME / "Freelance"
 
@@ -48,7 +51,11 @@ def _now() -> str:
 
 
 def _db() -> sqlite3.Connection:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(DATA_DIR, 0o700)
+    except OSError:
+        pass
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute(
@@ -75,7 +82,25 @@ def _db() -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_freelance_status ON opportunities(status)"
     )
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(opportunities)").fetchall()
+    }
+    migrations = {
+        "applied_at": "TEXT NOT NULL DEFAULT ''",
+        "closed_at": "TEXT NOT NULL DEFAULT ''",
+        "outcome_value": "REAL NOT NULL DEFAULT 0",
+        "actual_hours": "REAL NOT NULL DEFAULT 0",
+        "notes": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, ddl in migrations.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE opportunities ADD COLUMN {name} {ddl}")
     conn.commit()
+    try:
+        os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
     return conn
 
 
@@ -159,7 +184,7 @@ def upsert(
 
 
 def scan_browser() -> dict[str, Any]:
-    rows = browserctl.extract_upwork_jobs()
+    rows = broker.submit("browser.upwork_jobs", {"max_items": 40})
     added = 0
     ids: list[int] = []
     for row in rows:
@@ -288,14 +313,114 @@ def set_status(opportunity_id: int, status: str) -> None:
     if status not in STATUSES:
         raise ValueError("invalid status: " + status)
     conn = _db()
-    conn.execute(
-        "UPDATE opportunities SET status=?, updated_at=? WHERE id=?",
-        (status, _now(), opportunity_id),
-    )
+    now = _now()
+    if status == "applied-manual":
+        conn.execute(
+            "UPDATE opportunities SET status=?, applied_at=?, updated_at=? WHERE id=?",
+            (status, now, now, opportunity_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE opportunities SET status=?, updated_at=? WHERE id=?",
+            (status, now, opportunity_id),
+        )
     if conn.total_changes == 0:
         raise KeyError(f"Unknown opportunity id: {opportunity_id}")
     conn.commit()
     write_memory_report()
+
+
+def record_outcome(
+    opportunity_id: int,
+    status: str,
+    value: float = 0.0,
+    hours: float = 0.0,
+    notes: str = "",
+) -> None:
+    if status not in {"won", "lost", "delivered"}:
+        raise ValueError("Outcome status must be won, lost, or delivered.")
+    conn = _db()
+    now = _now()
+    cur = conn.execute(
+        """
+        UPDATE opportunities
+           SET status=?, outcome_value=?, actual_hours=?, notes=?,
+               closed_at=?, updated_at=?
+         WHERE id=?
+        """,
+        (
+            status,
+            max(0.0, float(value)),
+            max(0.0, float(hours)),
+            notes.strip()[:8000],
+            now,
+            now,
+            opportunity_id,
+        ),
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        raise KeyError(f"Unknown opportunity id: {opportunity_id}")
+    write_memory_report()
+
+
+def add_note(opportunity_id: int, note: str) -> None:
+    conn = _db()
+    row = get(opportunity_id)
+    previous = str(row["notes"] or "").strip()
+    stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    combined = (previous + "\n" if previous else "") + f"[{stamp}] {note.strip()}"
+    conn.execute(
+        "UPDATE opportunities SET notes=?, updated_at=? WHERE id=?",
+        (combined[-12000:], _now(), opportunity_id),
+    )
+    conn.commit()
+
+
+def metrics() -> dict[str, Any]:
+    conn = _db()
+    total = conn.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0]
+    applied = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE applied_at<>''"
+    ).fetchone()[0]
+    won = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE status='won'"
+    ).fetchone()[0]
+    lost = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE status='lost'"
+    ).fetchone()[0]
+    interviews = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE status='interview'"
+    ).fetchone()[0]
+    delivered = conn.execute(
+        "SELECT COUNT(*) FROM opportunities WHERE status IN ('delivered','won')"
+    ).fetchone()[0]
+    money = conn.execute(
+        "SELECT COALESCE(SUM(outcome_value),0) FROM opportunities WHERE status='won'"
+    ).fetchone()[0]
+    hours = conn.execute(
+        "SELECT COALESCE(SUM(actual_hours),0) FROM opportunities WHERE status IN ('won','delivered')"
+    ).fetchone()[0]
+    avg_won = conn.execute(
+        "SELECT AVG(fit_score) FROM opportunities WHERE status='won' AND fit_score IS NOT NULL"
+    ).fetchone()[0]
+    avg_lost = conn.execute(
+        "SELECT AVG(fit_score) FROM opportunities WHERE status='lost' AND fit_score IS NOT NULL"
+    ).fetchone()[0]
+    decided = won + lost
+    return {
+        "captured": int(total),
+        "applied_manual": int(applied),
+        "interviews": int(interviews),
+        "delivered": int(delivered),
+        "won": int(won),
+        "lost": int(lost),
+        "win_rate_percent": round((won / decided) * 100, 1) if decided else None,
+        "recorded_revenue": float(money or 0),
+        "recorded_delivery_hours": float(hours or 0),
+        "average_fit_won": round(float(avg_won), 1) if avg_won is not None else None,
+        "average_fit_lost": round(float(avg_lost), 1) if avg_lost is not None else None,
+    }
 
 
 def _slug(text: str) -> str:
@@ -384,6 +509,10 @@ def write_memory_report(limit: int = 25) -> None:
             lines.append(f"- URL: {row['source_url']}")
         if row["fit_reason"]:
             lines.append(f"- Why: {row['fit_reason']}")
+        if row["outcome_value"]:
+            lines.append(f"- Outcome value: {row['outcome_value']}")
+        if row["actual_hours"]:
+            lines.append(f"- Actual hours: {row['actual_hours']}")
         lines.append("")
     MEMORY_REPORT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
@@ -653,6 +782,29 @@ def cmd_set_status(args) -> int:
     return 0
 
 
+def cmd_outcome(args) -> int:
+    record_outcome(
+        args.id,
+        args.status,
+        value=args.value,
+        hours=args.hours,
+        notes=args.notes or "",
+    )
+    print(f"Recorded #{args.id} outcome as {args.status}.")
+    return 0
+
+
+def cmd_note(args) -> int:
+    add_note(args.id, args.text)
+    print(f"Added note to opportunity #{args.id}.")
+    return 0
+
+
+def cmd_metrics(_args) -> int:
+    print(json.dumps(metrics(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_workspace(args) -> int:
     path = create_workspace(args.id)
     print(path)
@@ -765,6 +917,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id", type=int)
     s.add_argument("status", choices=sorted(STATUSES))
     s.set_defaults(func=cmd_set_status)
+
+    s = sub.add_parser("outcome")
+    s.add_argument("id", type=int)
+    s.add_argument("status", choices=["won", "lost", "delivered"])
+    s.add_argument("--value", type=float, default=0)
+    s.add_argument("--hours", type=float, default=0)
+    s.add_argument("--notes")
+    s.set_defaults(func=cmd_outcome)
+
+    s = sub.add_parser("note")
+    s.add_argument("id", type=int)
+    s.add_argument("--text", required=True)
+    s.set_defaults(func=cmd_note)
+
+    s = sub.add_parser("metrics")
+    s.set_defaults(func=cmd_metrics)
 
     s = sub.add_parser("workspace")
     s.add_argument("id", type=int)
