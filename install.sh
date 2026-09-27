@@ -197,6 +197,7 @@ fi
   "google-auth>=2.40" \
   "google-auth-oauthlib>=1.2" \
   "google-api-python-client>=2.170" \
+  "openai-codex>=0.153.4" \
   "playwright>=1.50" \
   "Pillow>=10"
 
