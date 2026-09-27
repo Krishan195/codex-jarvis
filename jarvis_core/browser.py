@@ -335,6 +335,7 @@ def click(selector: str) -> dict[str, str]:
         _locator(page, selector).click()
         page.wait_for_load_state("domcontentloaded", timeout=30000)
         page.bring_to_front()
+        _remember_page(page)
         return {"title": page.title(), "url": page.url}
     finally:
         # Disconnect Playwright without terminating the persistent Chrome daemon.
@@ -351,4 +352,63 @@ def fill(selector: str, value: str) -> dict[str, str]:
         return {"title": page.title(), "url": page.url}
     finally:
         # Disconnect Playwright without terminating the persistent Chrome daemon.
+        pw.stop()
+
+
+def extract_upwork_jobs(max_items: int = 40) -> list[dict[str, str]]:
+    """Extract visible Upwork job cards from the active authenticated page.
+
+    This is read-only. It does not submit proposals, spend Connects, send
+    messages, or alter the account.
+    """
+    pw, browser = _connect()
+    try:
+        page = _page(browser)
+        if "upwork.com" not in (page.url or "").lower():
+            raise BrowserError(
+                "The active Jarvis browser tab is not on Upwork. "
+                "Open the Find Work/job feed first."
+            )
+        page.bring_to_front()
+        anchors = page.locator('a[href*="/jobs/"], a[href*="/freelance-jobs/"]')
+        count = min(anchors.count(), max_items * 4)
+        rows: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for i in range(count):
+            anchor = anchors.nth(i)
+            try:
+                data = anchor.evaluate(
+                    """e => {
+                        const href = e.href || "";
+                        const title = (e.innerText || e.textContent || "").trim();
+                        let card = e.closest(
+                            'article, [data-test*="job"], [data-ev-label*="job"], section'
+                        );
+                        if (!card) card = e.parentElement;
+                        const text = ((card && card.innerText) || title || "").trim();
+                        return {href, title, text};
+                    }"""
+                )
+            except Exception:
+                continue
+            url = (data.get("href") or "").strip()
+            title = " ".join((data.get("title") or "").split()).strip()
+            text = " ".join((data.get("text") or "").split()).strip()
+            if not url or url in seen:
+                continue
+            if not title:
+                # Upwork sometimes wraps the visible title one level above/below
+                # the link; use the first useful line from the card as fallback.
+                title = text[:180] or "Untitled Upwork opportunity"
+            seen.add(url)
+            rows.append({
+                "title": title[:300],
+                "url": url,
+                "text": text[:8000],
+            })
+            if len(rows) >= max_items:
+                break
+        _remember_page(page)
+        return rows
+    finally:
         pw.stop()
