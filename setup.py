@@ -34,6 +34,7 @@ defaults = {
     "permission_mode": "ask",
     "resume_last_session": True,
     "signals_dir": str(backtalk),
+    "memory_vault_dir": str(home / "Memory"),
     "greeting": "Hello Boss, what are we working on today?",
     # Voice is latency-sensitive: use the efficient model at low effort.
     # Change these any time if more reasoning depth is worth the delay.
