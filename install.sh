@@ -81,6 +81,11 @@ if not any("openai-codex" in line for line in lines):
         if line.strip() == "dependencies = [":
             lines.insert(i + 1, '    "openai-codex>=0.153.4",')
             break
+if not any("kokoro-onnx" in line for line in lines):
+    for i, line in enumerate(lines):
+        if line.strip() == "dependencies = [":
+            lines.insert(i + 1, '    "kokoro-onnx>=0.6.1",')
+            break
 p.write_text("\n".join(lines) + "\n")
 PY
 
@@ -93,6 +98,34 @@ fi
 python3 "$ROOT/tools/update_agent_personality.py" "$ROOT/AGENTS.md" "$HOME_DIR/AGENTS.md"
 
 python3 "$ROOT/setup.py"
+
+
+say "Preparing low-latency Kokoro ONNX model..."
+python3 - "$HOME_DIR/backtalk/models" <<'PY'
+from pathlib import Path
+from urllib.request import urlretrieve
+import sys
+
+dest = Path(sys.argv[1])
+dest.mkdir(parents=True, exist_ok=True)
+
+assets = {
+    "kokoro-v1.0.int8.onnx":
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx",
+    "voices-v1.0.bin":
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+}
+
+for name, url in assets.items():
+    path = dest / name
+    if path.exists() and path.stat().st_size > 1024:
+        print(f"[codex-jarvis] {name} already present.")
+        continue
+    tmp = path.with_suffix(path.suffix + ".part")
+    print(f"[codex-jarvis] downloading {name} (one-time)...")
+    urlretrieve(url, tmp)
+    tmp.replace(path)
+PY
 
 say "Running Backtalk's dependency installer."
 (
