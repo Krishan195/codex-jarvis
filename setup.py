@@ -27,6 +27,8 @@ defaults = {
     "name": "Jarvis",
     "ptt_key": "home",
     "voice": "bm_lewis",
+    "tts_backend": "piper",
+    "piper_voice": "en_GB-alan-medium",
     "stt_model": "small.en",
     "mic_mode": "ptt",
     "permission_mode": "ask",
