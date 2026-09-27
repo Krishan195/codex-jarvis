@@ -286,7 +286,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/jarvis-freelance scan-email --days 3 --notify
+ExecStart=%h/.local/bin/jarvis-freelance daily --days 3 --max-jobs 5 --notify
 EOF
 
     cat > "$unit_dir/jarvis-freelance-scan.timer" <<EOF
@@ -305,6 +305,7 @@ EOF
     systemctl --user enable jarvis-browser.service >/dev/null 2>&1 || true
     say "Jarvis browser service installed. Start with: jarvis-core browser-start"
     say "Daily briefing timer installed at 08:00; it will enable after Google OAuth."
+    say "Daily freelance agent timer installed at 08:30; it will enable after Google OAuth."
   fi
 fi
 
