@@ -1,29 +1,37 @@
 #!/usr/bin/env python3
-"""Sync the managed Jarvis personality block into the agent-home AGENTS.md.
+"""Sync Codex Jarvis managed instruction blocks into agent-home AGENTS.md.
 
-Only the marked personality section is managed. Everything else in the user's
-AGENTS.md is preserved.
+Only marked blocks are managed. Everything else in the user's AGENTS.md is
+preserved.
 """
-
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-START = "<!-- CODEX-JARVIS-PERSONALITY-START -->"
-END = "<!-- CODEX-JARVIS-PERSONALITY-END -->"
+BLOCKS = [
+    (
+        "<!-- CODEX-JARVIS-PERSONALITY-START -->",
+        "<!-- CODEX-JARVIS-PERSONALITY-END -->",
+        "Jarvis personality",
+    ),
+    (
+        "<!-- CODEX-JARVIS-CORE-START -->",
+        "<!-- CODEX-JARVIS-CORE-END -->",
+        "Jarvis core services",
+    ),
+]
 
 if len(sys.argv) != 3:
     raise SystemExit("usage: update_agent_personality.py TEMPLATE_AGENTS HOME_AGENTS")
 
 template = Path(sys.argv[1])
 target = Path(sys.argv[2])
-
 src = template.read_text(encoding="utf-8")
-if START not in src or END not in src:
-    raise SystemExit("managed personality markers missing from template")
 
-managed = src[src.index(START): src.index(END) + len(END)]
+for start, end, _ in BLOCKS:
+    if start not in src or end not in src:
+        raise SystemExit(f"managed block markers missing: {start}")
 
 if not target.exists():
     target.write_text(src, encoding="utf-8")
@@ -31,16 +39,21 @@ if not target.exists():
     raise SystemExit(0)
 
 dst = target.read_text(encoding="utf-8")
-if START in dst and END in dst:
-    before = dst[:dst.index(START)]
-    after = dst[dst.index(END) + len(END):]
-    new = before + managed + after
-else:
-    sep = "" if dst.endswith("\n\n") else ("\n" if dst.endswith("\n") else "\n\n")
-    new = dst + sep + "## Jarvis personality\n\n" + managed + "\n"
+new = dst
+
+for start, end, title in BLOCKS:
+    managed = src[src.index(start): src.index(end) + len(end)]
+    if start in new and end in new:
+        before = new[:new.index(start)]
+        after = new[new.index(end) + len(end):]
+        new = before + managed + after
+    else:
+        sep = "" if new.endswith("\n\n") else ("\n" if new.endswith("\n") else "\n\n")
+        new = new + sep + managed + "\n"
+        print(f"[codex-jarvis] added managed {title} block")
 
 if new != dst:
     target.write_text(new, encoding="utf-8")
-    print("[codex-jarvis] updated managed Jarvis personality in AGENTS.md")
+    print("[codex-jarvis] updated managed Jarvis instructions in AGENTS.md")
 else:
-    print("[codex-jarvis] Jarvis personality already current")
+    print("[codex-jarvis] managed Jarvis instructions already current")
