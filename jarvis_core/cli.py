@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 from pathlib import Path
 import json
 import shutil
@@ -10,7 +9,11 @@ import subprocess
 import sys
 
 from . import approvals
+from . import browser as browserctl
+from . import credentials as credential_store
 from . import secrets
+from . import showcase
+from . import system_access
 from .briefing import build as build_briefing, save as save_briefing, notify
 from .google_workspace import (
     GoogleNotConnected,
@@ -36,6 +39,11 @@ def cmd_status(_args) -> int:
         print("Google Workspace: connected")
     except Exception as exc:
         print(f"Google Workspace: not ready ({exc})")
+    print(f"Browser daemon: {'ready' if browserctl.running() else 'stopped'}")
+    try:
+        print(f"Chrome/Chromium: {browserctl.chrome_binary()}")
+    except Exception as exc:
+        print(f"Chrome/Chromium: not ready ({exc})")
     print(f"Pending approvals: {len(approvals.pending())}")
     return 0
 
@@ -78,6 +86,81 @@ def cmd_secret_delete(args) -> int:
     return 0
 
 
+def cmd_credential_set(args) -> int:
+    host = credential_store.set_credential(args.site, args.username)
+    print(f"Stored website credential for {host} in Secret Service.")
+    print("The password was not written to Memory, config, logs, or Git.")
+    return 0
+
+
+def cmd_credential_list(_args) -> int:
+    rows = credential_store.list_credentials()
+    if not rows:
+        print("No website credentials are indexed.")
+        return 0
+    for row in rows:
+        print(f"{row['site']}  username={row['username']}")
+    return 0
+
+
+def cmd_credential_delete(args) -> int:
+    ok = credential_store.delete_credential(args.site)
+    print("Deleted." if ok else "Credential metadata was not found.")
+    return 0
+
+
+def cmd_browser_start(_args) -> int:
+    browserctl.ensure_started()
+    print("Jarvis browser is ready.")
+    print(f"Persistent profile: {browserctl.PROFILE_DIR}")
+    return 0
+
+
+def cmd_browser_stop(_args) -> int:
+    if shutil.which("systemctl"):
+        subprocess.run(
+            ["systemctl", "--user", "stop", "jarvis-browser.service"],
+            check=False,
+        )
+    print("Jarvis browser stop requested.")
+    return 0
+
+
+def cmd_browser_open(args) -> int:
+    print(json.dumps(browserctl.open_url(args.url), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_browser_search(args) -> int:
+    print(json.dumps(browserctl.search(args.query), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_browser_read(args) -> int:
+    data = browserctl.read_page(args.url, max_chars=args.max_chars)
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_browser_inspect(args) -> int:
+    data = browserctl.inspect_interactive(args.max_items)
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_browser_login_window(args) -> int:
+    data = browserctl.login_window(args.url)
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+    print("Complete login manually in the Jarvis browser. The dedicated profile keeps the session.")
+    return 0
+
+
+def cmd_show(args) -> int:
+    showcase.spawn(args.title, args.description, args.image_url, args.source_url)
+    print("Visual card opened.")
+    return 0
+
+
 def cmd_request_email(args) -> int:
     body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else args.body
     if not body:
@@ -102,6 +185,44 @@ def cmd_request_event(args) -> int:
             "description": args.description or "",
             "location": args.location or "",
         },
+    )
+    _print_request(req)
+    return 0
+
+
+def cmd_request_browser_login(args) -> int:
+    # The password itself is never copied into the approval request.
+    req = approvals.propose(
+        "browser.login",
+        f"Sign in to {args.site} at {args.url} using its stored credential",
+        {
+            "site": args.site,
+            "url": args.url,
+            "username_selector": args.username_selector,
+            "password_selector": args.password_selector,
+            "submit_selector": args.submit_selector or "",
+        },
+    )
+    _print_request(req)
+    return 0
+
+
+def cmd_request_browser_click(args) -> int:
+    req = approvals.propose(
+        "browser.click",
+        f"Click browser element {args.selector!r} on the active page",
+        {"selector": args.selector},
+    )
+    _print_request(req)
+    return 0
+
+
+def cmd_request_system(args) -> int:
+    # Show the exact command in the approval summary. No hidden command payload.
+    req = approvals.propose(
+        "system.exec",
+        f"Run Ubuntu command exactly as shown: {args.command}",
+        {"command": args.command},
     )
     _print_request(req)
     return 0
@@ -137,6 +258,7 @@ def cmd_execute(args) -> int:
             p = req["payload"]
             result = send_email(p["to"], p["subject"], p["body"])
             detail = f"Gmail message id {result.get('id', '(unknown)')}"
+
         elif req["action"] == "calendar.create":
             p = req["payload"]
             result = create_event(
@@ -144,13 +266,44 @@ def cmd_execute(args) -> int:
                 p.get("description", ""), p.get("location", ""),
             )
             detail = f"Calendar event id {result.get('id', '(unknown)')}"
+
+        elif req["action"] == "browser.login":
+            p = req["payload"]
+            username, password = credential_store.get_credential(p["site"])
+            result = browserctl.login_with_credential(
+                p["url"],
+                username,
+                password,
+                p["username_selector"],
+                p["password_selector"],
+                p.get("submit_selector") or None,
+            )
+            detail = f"Browser login action completed at {result.get('url', '')}"
+
+        elif req["action"] == "browser.click":
+            p = req["payload"]
+            result = browserctl.click(p["selector"])
+            detail = f"Browser click completed at {result.get('url', '')}"
+
+        elif req["action"] == "system.exec":
+            p = req["payload"]
+            result = system_access.run(p["command"])
+            detail = (
+                f"Ubuntu command rc={result['returncode']}\n"
+                f"stdout:\n{result['stdout']}\n"
+                f"stderr:\n{result['stderr']}"
+            )
+            print(detail)
+
         else:
             raise RuntimeError(f"Unsupported action: {req['action']}")
     except Exception as exc:
         approvals.mark_result(req["id"], False, str(exc))
         raise
+
     approvals.mark_result(req["id"], True, detail)
-    print(f"Executed {req['id']}: {detail}")
+    if req["action"] != "system.exec":
+        print(f"Executed {req['id']}: {detail}")
     return 0
 
 
@@ -177,6 +330,52 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.set_defaults(func=cmd_secret_delete)
 
+    s = sub.add_parser("credential-set")
+    s.add_argument("site")
+    s.add_argument("--username", required=True)
+    s.set_defaults(func=cmd_credential_set)
+
+    s = sub.add_parser("credential-list")
+    s.set_defaults(func=cmd_credential_list)
+
+    s = sub.add_parser("credential-delete")
+    s.add_argument("site")
+    s.set_defaults(func=cmd_credential_delete)
+
+    s = sub.add_parser("browser-start")
+    s.set_defaults(func=cmd_browser_start)
+
+    s = sub.add_parser("browser-stop")
+    s.set_defaults(func=cmd_browser_stop)
+
+    s = sub.add_parser("browser-open")
+    s.add_argument("url")
+    s.set_defaults(func=cmd_browser_open)
+
+    s = sub.add_parser("browser-search")
+    s.add_argument("query")
+    s.set_defaults(func=cmd_browser_search)
+
+    s = sub.add_parser("browser-read")
+    s.add_argument("url", nargs="?")
+    s.add_argument("--max-chars", type=int, default=12000)
+    s.set_defaults(func=cmd_browser_read)
+
+    s = sub.add_parser("browser-inspect")
+    s.add_argument("--max-items", type=int, default=80)
+    s.set_defaults(func=cmd_browser_inspect)
+
+    s = sub.add_parser("browser-login-window")
+    s.add_argument("url")
+    s.set_defaults(func=cmd_browser_login_window)
+
+    s = sub.add_parser("show")
+    s.add_argument("--title", required=True)
+    s.add_argument("--description", required=True)
+    s.add_argument("--image-url", default="")
+    s.add_argument("--source-url", default="")
+    s.set_defaults(func=cmd_show)
+
     s = sub.add_parser("request-email")
     s.add_argument("--to", required=True)
     s.add_argument("--subject", required=True)
@@ -192,6 +391,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--description")
     s.add_argument("--location")
     s.set_defaults(func=cmd_request_event)
+
+    s = sub.add_parser("request-browser-login")
+    s.add_argument("--site", required=True)
+    s.add_argument("--url", required=True)
+    s.add_argument("--username-selector", required=True)
+    s.add_argument("--password-selector", required=True)
+    s.add_argument("--submit-selector")
+    s.set_defaults(func=cmd_request_browser_login)
+
+    s = sub.add_parser("request-browser-click")
+    s.add_argument("--selector", required=True)
+    s.set_defaults(func=cmd_request_browser_click)
+
+    s = sub.add_parser("request-system")
+    s.add_argument("--command", required=True)
+    s.set_defaults(func=cmd_request_system)
 
     s = sub.add_parser("approve")
     s.add_argument("request_id")
