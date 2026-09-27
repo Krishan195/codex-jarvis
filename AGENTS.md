@@ -51,6 +51,8 @@ At the start of every fresh session, use the memory bootstrap supplied by the vo
 
 Memory rules:
 - when the user says "remember this", persist it immediately
+- stable user background, professional history, technical strengths, long-term goals, working preferences, and non-sensitive interests belong in `Memory/User Profile.md`
+- freelance-safe claims and proposal-relevant experience belong in `Memory/02 - Projects/Freelance Profile.md`
 - persist durable project state, decisions, proven fixes, recurring workflows, routines, preferences, and useful people/role context
 - update the relevant contextual note first; use the daily note as a concise checkpoint, not the only source of truth
 - keep `Memory/Active Priorities.md` aligned with genuinely open work
