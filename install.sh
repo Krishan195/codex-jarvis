@@ -46,6 +46,9 @@ if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   if command -v dpkg >/dev/null 2>&1 && ! dpkg -s python3-venv >/dev/null 2>&1; then
     core_pkgs+=(python3-venv)
   fi
+  python3 - <<'PY' >/dev/null 2>&1 || core_pkgs+=(python3-tk)
+import tkinter
+PY
   if [ "${#core_pkgs[@]}" -gt 0 ]; then
     say "Installing secure personal-agent prerequisites: ${core_pkgs[*]}"
     sudo apt-get update
@@ -193,7 +196,9 @@ fi
 "$CORE_VENV/bin/python" -m pip install --quiet \
   "google-auth>=2.40" \
   "google-auth-oauthlib>=1.2" \
-  "google-api-python-client>=2.170"
+  "google-api-python-client>=2.170" \
+  "playwright>=1.50" \
+  "Pillow>=10"
 
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/jarvis" <<EOF
@@ -230,6 +235,21 @@ EOF
   if command -v systemctl >/dev/null 2>&1; then
     unit_dir="$HOME/.config/systemd/user"
     mkdir -p "$unit_dir"
+    cat > "$unit_dir/jarvis-browser.service" <<EOF
+[Unit]
+Description=Jarvis persistent browser
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/jarvis-core browser-daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+
     cat > "$unit_dir/jarvis-briefing.service" <<EOF
 [Unit]
 Description=Jarvis daily Gmail and Calendar briefing
@@ -253,6 +273,8 @@ Unit=jarvis-briefing.service
 WantedBy=timers.target
 EOF
     systemctl --user daemon-reload || true
+    systemctl --user enable jarvis-browser.service >/dev/null 2>&1 || true
+    say "Jarvis browser service installed. Start with: jarvis-core browser-start"
     say "Daily briefing timer installed at 08:00; it will enable after Google OAuth."
   fi
 fi
@@ -261,5 +283,7 @@ say "Personal MVP installation finished."
 say "Memory vault: $HOME_DIR/Memory"
 say "Start with: jarvis"
 say "Core status: jarvis-core status"
+say "Browser: jarvis-core browser-start"
+say "Website password vault: jarvis-core credential-set example.com --username USER"
 say "Google setup: jarvis-core google-auth --client-json /path/to/client_secret.json"
 say "Or double-click: $HOME/Desktop/Jarvis.desktop"
