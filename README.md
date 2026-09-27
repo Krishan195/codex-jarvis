@@ -167,3 +167,70 @@ jarvis-core execute APPROVAL_ID
 Approvals expire, are one-time, and are recorded in a local audit log.
 
 See [SECURITY.md](SECURITY.md) for the credential model.
+
+
+## Browser automation
+
+Jarvis now has a dedicated persistent Chrome/Chromium profile. Start it with:
+
+```bash
+jarvis-core browser-start
+```
+
+Useful read-only commands:
+
+```bash
+jarvis-core browser-open https://example.com
+jarvis-core browser-search "latest iPhone"
+jarvis-core browser-read
+jarvis-core browser-inspect
+```
+
+For sites that need a one-time manual login:
+
+```bash
+jarvis-core browser-login-window https://example.com/login
+```
+
+Sign in yourself in the Jarvis browser. The session persists under
+`~/my-agent/BrowserProfile` and can be reused later.
+
+For ordinary sites where you explicitly want Jarvis to keep a password:
+
+```bash
+jarvis-core credential-set example.com --username USERNAME
+```
+
+The password is entered with a hidden prompt and stored in Linux Secret Service,
+not in Memory, Git, or config files.
+
+Stored-credential login and consequential browser clicks are approval-gated.
+
+## Ubuntu control
+
+Jarvis can inspect the Ubuntu environment directly and can propose
+state-changing user/system commands with:
+
+```bash
+jarvis-core request-system --command 'COMMAND'
+```
+
+The exact command is shown before one-time approval. The project intentionally
+does **not** disable Codex sandboxing, configure passwordless sudo, or store a
+sudo password.
+
+## Visual answers
+
+Jarvis can pop up a native desktop card with an image, description, and source:
+
+```bash
+jarvis-core show \
+  --title "iPhone" \
+  --description "Current model details..." \
+  --image-url "https://..." \
+  --source-url "https://..."
+```
+
+This is intended for voice requests such as "show me the latest iPhone": Jarvis
+can search/read the current source, extract the page image/description, speak a
+short answer, and open the visual card.
