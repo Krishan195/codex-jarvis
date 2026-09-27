@@ -153,8 +153,11 @@ the current facts/source first, then open a visual card with:
 
 `jarvis-core show --title ... --description ... --image-url ... --source-url ...`
 
-Prefer an official/current source image when available. The spoken answer should
-stay brief because the details are visible in the card.
+`browser-read` returns both the page's Open Graph image and an `images`
+candidate list. Prefer a candidate whose alt text/title matches the subject
+over a generic logo or site-wide Open Graph image. Prefer an official/current
+source image when available. The spoken answer should stay brief because the
+details are visible in the card.
 
 ### Ubuntu control
 
