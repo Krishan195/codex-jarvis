@@ -35,6 +35,18 @@ def create(path: Path, content: str):
     print(f"[codex-jarvis] memory: created {path.relative_to(vault)}")
     return True
 
+def ensure_block(path: Path, marker: str, content: str) -> bool:
+    """Append a durable migration block without replacing user-authored text."""
+    if not path.exists():
+        return False
+    current = path.read_text(encoding="utf-8")
+    if marker in current:
+        return False
+    updated = current.rstrip() + "\n\n" + content.rstrip() + "\n"
+    path.write_text(updated, encoding="utf-8")
+    print(f"[codex-jarvis] memory: updated {path.relative_to(vault)}")
+    return True
+
 create(vault / "VAULT-INDEX.md", """---
 status: active
 project: meta
@@ -231,5 +243,23 @@ created: {today:%Y-%m-%d}
 - [[Codex Jarvis]]
 - [[Active Priorities]]
 """)
+
+ensure_block(
+    vault / "02 - Projects" / "Codex Jarvis.md",
+    "<!-- JARVIS-PERSONAL-AGENT-REQUIREMENTS -->",
+    """<!-- JARVIS-PERSONAL-AGENT-REQUIREMENTS -->
+## Personal-agent requirements
+
+- Credentials must use OAuth or the OS credential vault; never store secret
+  values in Memory or source control.
+- Gmail and Calendar should support automatic read-only daily briefings.
+- Consequential external actions require one-time scoped Boss approval unless
+  that exact action class was explicitly pre-authorized.
+- The long-term mobile client is an iPhone interface to the same Jarvis Core and
+  the same Memory vault, not a separate assistant with separate memory.
+- Website automation should prefer authenticated browser sessions over handing
+  raw passwords to the model.
+""",
+)
 
 print(f"[codex-jarvis] memory vault: {vault}")
