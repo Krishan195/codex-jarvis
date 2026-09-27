@@ -20,6 +20,8 @@ CDP_PORT = 9223
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 AGENT_HOME = Path.home() / "my-agent"
 PROFILE_DIR = AGENT_HOME / "BrowserProfile"
+STATE_DIR = Path.home() / ".local" / "share" / "codex-jarvis"
+CURRENT_PAGE_FILE = STATE_DIR / "browser-current.json"
 
 
 class BrowserError(RuntimeError):
@@ -108,12 +110,42 @@ def _connect():
     return pw, browser
 
 
+def _remember_page(page) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    data = {"url": page.url}
+    CURRENT_PAGE_FILE.write_text(
+        json.dumps(data, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        os.chmod(CURRENT_PAGE_FILE, 0o600)
+    except OSError:
+        pass
+
+
 def _page(browser, new: bool = False):
     if not browser.contexts:
         raise BrowserError("Chrome has no browser context.")
     ctx = browser.contexts[0]
     if new or not ctx.pages:
         return ctx.new_page()
+
+    # connect_over_cdp does not guarantee that ctx.pages[-1] is the tab
+    # Jarvis most recently brought to the front. Prefer the URL we explicitly
+    # remembered, then fall back to the newest non-blank tab.
+    try:
+        state = json.loads(CURRENT_PAGE_FILE.read_text(encoding="utf-8"))
+        wanted = state.get("url", "")
+        if wanted:
+            for page in reversed(ctx.pages):
+                if page.url == wanted:
+                    return page
+    except Exception:
+        pass
+
+    for page in reversed(ctx.pages):
+        if page.url and page.url != "about:blank":
+            return page
     return ctx.pages[-1]
 
 
@@ -125,6 +157,7 @@ def open_url(url: str, *, new_tab: bool = True) -> dict[str, str]:
         page = _page(browser, new=new_tab)
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.bring_to_front()
+        _remember_page(page)
         return {"title": page.title(), "url": page.url}
     finally:
         # Disconnect Playwright without terminating the persistent Chrome daemon.
@@ -163,6 +196,7 @@ def read_page(url: str | None = None, max_chars: int = 12000) -> dict[str, Any]:
             description = _meta_content(page, 'meta[property="og:description"]')
         image = _meta_content(page, 'meta[property="og:image"]')
         text = page.locator("body").inner_text(timeout=10000)
+        _remember_page(page)
         return {
             "title": title,
             "url": page.url,
@@ -200,6 +234,7 @@ def inspect_interactive(max_items: int = 80) -> list[dict[str, str]]:
                 })
             except Exception:
                 continue
+        _remember_page(page)
         return rows
     finally:
         pw.stop()
@@ -234,6 +269,7 @@ def login_with_credential(
             _locator(page, submit_selector).click()
             page.wait_for_load_state("domcontentloaded", timeout=30000)
         page.bring_to_front()
+        _remember_page(page)
         return {"title": page.title(), "url": page.url}
     finally:
         # Disconnect Playwright without terminating the persistent Chrome daemon.
@@ -259,6 +295,7 @@ def fill(selector: str, value: str) -> dict[str, str]:
         page = _page(browser)
         _locator(page, selector).fill(value)
         page.bring_to_front()
+        _remember_page(page)
         return {"title": page.title(), "url": page.url}
     finally:
         # Disconnect Playwright without terminating the persistent Chrome daemon.
