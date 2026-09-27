@@ -37,6 +37,22 @@ PY
   fi
 fi
 
+# Jarvis core uses the desktop Secret Service for credentials, a separate
+# virtualenv for Google OAuth/API libraries, and desktop notifications.
+if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+  core_pkgs=()
+  command -v secret-tool >/dev/null 2>&1 || core_pkgs+=(libsecret-tools)
+  command -v notify-send >/dev/null 2>&1 || core_pkgs+=(libnotify-bin)
+  if command -v dpkg >/dev/null 2>&1 && ! dpkg -s python3-venv >/dev/null 2>&1; then
+    core_pkgs+=(python3-venv)
+  fi
+  if [ "${#core_pkgs[@]}" -gt 0 ]; then
+    say "Installing secure personal-agent prerequisites: ${core_pkgs[*]}"
+    sudo apt-get update
+    sudo apt-get install -y "${core_pkgs[@]}"
+  fi
+fi
+
 say "Agent home: $HOME_DIR"
 say "Codex: $(codex --version 2>/dev/null || true)"
 
@@ -168,6 +184,17 @@ say "Running Backtalk's dependency installer."
   ./install.sh
 )
 
+say "Installing Jarvis core services in an isolated virtual environment..."
+CORE_VENV="$HOME_DIR/.jarvis-core-venv"
+if [ ! -x "$CORE_VENV/bin/python" ]; then
+  python3 -m venv "$CORE_VENV"
+fi
+"$CORE_VENV/bin/python" -m pip install --quiet --upgrade pip
+"$CORE_VENV/bin/python" -m pip install --quiet \
+  "google-auth>=2.40" \
+  "google-auth-oauthlib>=1.2" \
+  "google-api-python-client>=2.170"
+
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/jarvis" <<EOF
 #!/usr/bin/env bash
@@ -175,6 +202,13 @@ cd "$ROOT"
 exec bash start.sh "\$@"
 EOF
 chmod +x "$HOME/.local/bin/jarvis"
+
+cat > "$HOME/.local/bin/jarvis-core" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.cli "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-core"
 
 if [ "$(uname -s)" = "Linux" ]; then
   desktop_dir="$HOME/Desktop"
@@ -192,9 +226,40 @@ EOF
   if command -v gio >/dev/null 2>&1; then
     gio set "$desktop_dir/Jarvis.desktop" metadata::trusted true >/dev/null 2>&1 || true
   fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    unit_dir="$HOME/.config/systemd/user"
+    mkdir -p "$unit_dir"
+    cat > "$unit_dir/jarvis-briefing.service" <<EOF
+[Unit]
+Description=Jarvis daily Gmail and Calendar briefing
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/jarvis-core briefing --notify
+EOF
+
+    cat > "$unit_dir/jarvis-briefing.timer" <<EOF
+[Unit]
+Description=Run Jarvis daily briefing each morning
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+Unit=jarvis-briefing.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl --user daemon-reload || true
+    say "Daily briefing timer installed at 08:00; it will enable after Google OAuth."
+  fi
 fi
 
 say "Personal MVP installation finished."
 say "Memory vault: $HOME_DIR/Memory"
 say "Start with: jarvis"
+say "Core status: jarvis-core status"
+say "Google setup: jarvis-core google-auth --client-json /path/to/client_secret.json"
 say "Or double-click: $HOME/Desktop/Jarvis.desktop"
