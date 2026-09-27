@@ -1,9 +1,15 @@
 """Trusted local control broker for Jarvis.
 
-Codex remains in workspace-write sandbox. Read-only desktop requests are
-written to a workspace spool; this user service executes them outside the
-sandbox. Privileged/consequential actions are never accepted directly: the
-broker only executes an already-approved one-time approval ID.
+The Codex voice brain stays workspace-scoped. It can write requests into a
+workspace spool, while this user service performs explicitly allow-listed local
+actions outside the Codex sandbox.
+
+Consequential actions use a two-step design:
+1. Codex may PROPOSE an action through the broker.
+2. Only an already-approved one-time approval ID may be EXECUTED.
+
+The approval payload is stored outside the workspace so it cannot be modified
+after approval. Approval itself is intentionally not exposed through the broker.
 """
 from __future__ import annotations
 
@@ -20,6 +26,24 @@ CONTROL_DIR = AGENT_HOME / ".jarvis-control"
 REQUEST_DIR = CONTROL_DIR / "requests"
 RESPONSE_DIR = CONTROL_DIR / "responses"
 PROCESSING_DIR = CONTROL_DIR / "processing"
+
+READ_ONLY_ACTIONS = {
+    "browser.start",
+    "browser.open",
+    "browser.search",
+    "browser.read",
+    "browser.inspect",
+    "browser.login_window",
+    "show",
+}
+
+APPROVABLE_ACTIONS = {
+    "gmail.send",
+    "calendar.create",
+    "browser.login",
+    "browser.click",
+    "system.exec",
+}
 
 
 class BrokerError(RuntimeError):
@@ -45,18 +69,23 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def submit(action: str, payload: dict[str, Any] | None = None,
-           timeout: float = 45.0) -> Any:
-    """Submit a broker request and wait for a response."""
+def submit(
+    action: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 45.0,
+) -> Any:
+    """Submit one request to the trusted broker and wait for its response."""
     _ensure()
     rid = secrets.token_hex(8)
-    req = {
-        "id": rid,
-        "action": action,
-        "payload": payload or {},
-        "created_at": time.time(),
-    }
-    _write_json(REQUEST_DIR / f"{rid}.json", req)
+    _write_json(
+        REQUEST_DIR / f"{rid}.json",
+        {
+            "id": rid,
+            "action": action,
+            "payload": payload or {},
+            "created_at": time.time(),
+        },
+    )
 
     response = RESPONSE_DIR / f"{rid}.json"
     deadline = time.time() + timeout
@@ -73,7 +102,10 @@ def submit(action: str, payload: dict[str, Any] | None = None,
                 raise BrokerError(data.get("error") or "Jarvis broker request failed")
             return data.get("result")
         time.sleep(0.08)
-    raise BrokerError(f"Jarvis broker timed out waiting for {action}")
+    raise BrokerError(
+        f"Jarvis broker timed out waiting for {action}. "
+        "Check jarvis-broker.service."
+    )
 
 
 def _execute_readonly(action: str, payload: dict[str, Any]) -> Any:
@@ -84,37 +116,49 @@ def _execute_readonly(action: str, payload: dict[str, Any]) -> Any:
         browserctl.ensure_started()
         return {"ready": True, "profile": str(browserctl.PROFILE_DIR)}
     if action == "browser.open":
-        return browserctl.open_url(payload["url"])
+        return browserctl.open_url(str(payload["url"]))
     if action == "browser.search":
-        return browserctl.search(payload["query"])
+        return browserctl.search(str(payload["query"]))
     if action == "browser.read":
         return browserctl.read_page(
             payload.get("url"),
-            max_chars=int(payload.get("max_chars") or 12000),
+            max_chars=min(int(payload.get("max_chars") or 12000), 20000),
         )
     if action == "browser.inspect":
         return browserctl.inspect_interactive(
-            int(payload.get("max_items") or 80)
+            min(int(payload.get("max_items") or 80), 120)
         )
     if action == "browser.login_window":
-        return browserctl.login_window(payload["url"])
+        return browserctl.login_window(str(payload["url"]))
     if action == "show":
         showcase.spawn(
-            payload["title"],
-            payload["description"],
-            payload.get("image_url", ""),
-            payload.get("source_url", ""),
+            str(payload["title"]),
+            str(payload["description"]),
+            str(payload.get("image_url", "")),
+            str(payload.get("source_url", "")),
         )
         return {"shown": True}
     raise BrokerError(f"Unsupported read-only broker action: {action}")
 
 
+def _propose(payload: dict[str, Any]) -> dict[str, Any]:
+    from . import approvals
+
+    action = str(payload.get("action") or "")
+    if action not in APPROVABLE_ACTIONS:
+        raise BrokerError(f"Action is not approvable through Jarvis: {action}")
+    summary = str(payload.get("summary") or "").strip()
+    body = payload.get("payload")
+    if not summary or not isinstance(body, dict):
+        raise BrokerError("Approval proposal requires summary and payload.")
+    return approvals.propose(action, summary[:1000], body)
+
+
 def _execute_approved(approval_id: str) -> dict[str, Any]:
     """Claim and execute one already-approved action.
 
-    The request payload lives in the protected approval store, not in the
-    workspace spool. This prevents a sandboxed process from changing the
-    approved command/action after Boss approved it.
+    Audit entries contain only a compact result. Command output is returned to
+    the caller but is deliberately not persisted in the audit log.
     """
     from . import approvals
     from . import browser as browserctl
@@ -129,15 +173,18 @@ def _execute_approved(approval_id: str) -> dict[str, Any]:
 
         if action == "gmail.send":
             result = send_email(p["to"], p["subject"], p["body"])
-            detail = f"Gmail message id {result.get('id', '(unknown)')}"
+            detail = f"Gmail send completed; message id {result.get('id', '(unknown)')}"
             out = {"detail": detail}
 
         elif action == "calendar.create":
             result = create_event(
-                p["summary"], p["start"], p["end"],
-                p.get("description", ""), p.get("location", ""),
+                p["summary"],
+                p["start"],
+                p["end"],
+                p.get("description", ""),
+                p.get("location", ""),
             )
-            detail = f"Calendar event id {result.get('id', '(unknown)')}"
+            detail = f"Calendar create completed; event id {result.get('id', '(unknown)')}"
             out = {"detail": detail}
 
         elif action == "browser.login":
@@ -150,55 +197,56 @@ def _execute_approved(approval_id: str) -> dict[str, Any]:
                 p["password_selector"],
                 p.get("submit_selector") or None,
             )
-            detail = f"Browser login completed at {result.get('url', '')}"
+            detail = "Browser credential login completed."
             out = {"detail": detail, "result": result}
 
         elif action == "browser.click":
             result = browserctl.click(p["selector"])
-            detail = f"Browser click completed at {result.get('url', '')}"
+            detail = "Approved browser click completed."
             out = {"detail": detail, "result": result}
 
         elif action == "system.exec":
             result = system_access.run(p["command"])
-            detail = (
-                f"Ubuntu command rc={result['returncode']}\n"
-                f"stdout:\n{result['stdout']}\n"
-                f"stderr:\n{result['stderr']}"
-            )
-            if result["returncode"] != 0:
-                raise RuntimeError(detail)
+            rc = int(result["returncode"])
+            detail = f"Approved Ubuntu command completed with exit code {rc}."
             out = {"detail": detail, "result": result}
+            if rc != 0:
+                approvals.mark_result(req["id"], False, detail)
+                raise RuntimeError(
+                    detail
+                    + "\nstdout:\n"
+                    + result["stdout"]
+                    + "\nstderr:\n"
+                    + result["stderr"]
+                )
 
         else:
             raise BrokerError(f"Unsupported approved action: {action}")
 
     except Exception as exc:
-        approvals.mark_result(req["id"], False, str(exc))
+        # Never persist arbitrary exception text; it may contain command output
+        # or sensitive page details.
+        try:
+            approvals.mark_result(req["id"], False, "Approved action failed.")
+        except Exception:
+            pass
         raise
 
-    approvals.mark_result(req["id"], True, out["detail"])
+    approvals.mark_result(req["id"], True, detail)
     return out
 
 
 def _handle(req: dict[str, Any]) -> Any:
     action = str(req.get("action") or "")
     payload = req.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise BrokerError("Broker payload must be an object.")
 
-    if action.startswith("browser.") or action == "show":
-        # Only the explicit read-only actions below are permitted without an
-        # approval ID. browser.click/browser.login are intentionally absent.
-        allowed = {
-            "browser.start",
-            "browser.open",
-            "browser.search",
-            "browser.read",
-            "browser.inspect",
-            "browser.login_window",
-            "show",
-        }
-        if action not in allowed:
-            raise BrokerError(f"Approval required for broker action: {action}")
+    if action in READ_ONLY_ACTIONS:
         return _execute_readonly(action, payload)
+
+    if action == "approval.propose":
+        return _propose(payload)
 
     if action == "approved.execute":
         approval_id = str(payload.get("approval_id") or "")
@@ -206,6 +254,8 @@ def _handle(req: dict[str, Any]) -> Any:
             raise BrokerError("approval_id is required")
         return _execute_approved(approval_id)
 
+    # Approval granting/rejection is deliberately absent. A sandboxed model
+    # must never be able to approve its own proposed action.
     raise BrokerError(f"Unsupported broker action: {action}")
 
 
@@ -230,8 +280,8 @@ def daemon() -> None:
             except Exception as exc:
                 data = {
                     "ok": False,
-                    "error": str(exc),
-                    "trace": traceback.format_exc(limit=8),
+                    "error": str(exc)[:4000],
+                    "trace": traceback.format_exc(limit=4)[:6000],
                 }
             _write_json(response, data)
             try:
