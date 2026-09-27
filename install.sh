@@ -215,6 +215,13 @@ exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.cli "\$@"
 EOF
 chmod +x "$HOME/.local/bin/jarvis-core"
 
+cat > "$HOME/.local/bin/jarvis-freelance" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.freelance "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-freelance"
+
 if [ "$(uname -s)" = "Linux" ]; then
   desktop_dir="$HOME/Desktop"
   mkdir -p "$desktop_dir"
@@ -272,6 +279,28 @@ Unit=jarvis-briefing.service
 [Install]
 WantedBy=timers.target
 EOF
+    cat > "$unit_dir/jarvis-freelance-scan.service" <<EOF
+[Unit]
+Description=Jarvis daily freelance opportunity scan
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/jarvis-freelance scan-email --days 3 --notify
+EOF
+
+    cat > "$unit_dir/jarvis-freelance-scan.timer" <<EOF
+[Unit]
+Description=Run Jarvis freelance opportunity scan each morning
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+Unit=jarvis-freelance-scan.service
+
+[Install]
+WantedBy=timers.target
+EOF
     systemctl --user daemon-reload || true
     systemctl --user enable jarvis-browser.service >/dev/null 2>&1 || true
     say "Jarvis browser service installed. Start with: jarvis-core browser-start"
@@ -284,6 +313,7 @@ say "Memory vault: $HOME_DIR/Memory"
 say "Start with: jarvis"
 say "Core status: jarvis-core status"
 say "Browser: jarvis-core browser-start"
+say "Freelance agent: jarvis-freelance status"
 say "Website password vault: jarvis-core credential-set example.com --username USER"
 say "Google setup: jarvis-core google-auth --client-json /path/to/client_secret.json"
 say "Or double-click: $HOME/Desktop/Jarvis.desktop"
