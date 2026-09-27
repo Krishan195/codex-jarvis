@@ -66,6 +66,8 @@ def _memory_bootstrap() -> str:
 
     paths = [
         root / "VAULT-INDEX.md",
+        root / "User Profile.md",
+        root / "02 - Projects" / "Freelance Profile.md",
         root / "Active Priorities.md",
     ]
 
