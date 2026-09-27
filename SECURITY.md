@@ -93,3 +93,62 @@ systemctl --user status jarvis-briefing.timer
 
 The installed timer defaults to 08:00 local time and is not enabled until
 Google authorization succeeds.
+
+
+## Browser sessions
+
+Jarvis uses a dedicated persistent Chrome/Chromium profile at:
+
+```text
+~/my-agent/BrowserProfile
+```
+
+The directory is private to the local user. Chrome remote debugging is bound
+only to `127.0.0.1:9223`, not to the LAN.
+
+Prefer this login model:
+
+1. Start the Jarvis browser.
+2. The user signs into Google or a website manually once.
+3. Chrome keeps the authenticated session in the dedicated profile.
+4. Jarvis reuses that session for later read-only work.
+
+Do not store or auto-type a Google account password. Google services should use
+OAuth or the existing authenticated browser session.
+
+For sites that genuinely require a stored username/password, use:
+
+```bash
+jarvis-core credential-set example.com --username USER
+```
+
+The password prompt is hidden and the password is stored in Secret Service.
+Only the site and username label are indexed locally.
+
+## Ubuntu access
+
+Jarvis does not receive passwordless root access. Read-only inspection and
+normal workspace operations use Codex tools. State-changing commands outside
+ordinary workspace editing are proposed through the one-time approval broker:
+
+```bash
+jarvis-core request-system --command 'COMMAND'
+```
+
+The exact command is shown before approval. The sudo password is never stored.
+Any root-level operation still relies on Ubuntu's own authentication boundary.
+
+## Visual answer cards
+
+Jarvis can open a native desktop card for answers where seeing the item helps:
+
+```bash
+jarvis-core show \
+  --title "..." \
+  --description "..." \
+  --image-url "https://..." \
+  --source-url "https://..."
+```
+
+Remote images are fetched only for display and are not treated as executable
+content.
