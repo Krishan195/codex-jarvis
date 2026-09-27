@@ -48,6 +48,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -65,7 +66,7 @@ _onnx_pipe = None
 _pipe_lock = threading.Lock()
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
-_ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.fp16.v1.1.onnx"
+_ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.v1.1.onnx"
 _ONNX_VOICES = _MODEL_DIR / "voices-v1.0.v1.1.bin"
 
 
@@ -197,13 +198,13 @@ def warm():
                 )
 
                 log(
-                    f"[mouth] loading Kokoro ONNX fp16 "
+                    f"[mouth] loading Kokoro ONNX fp32 "
                     f"(voice {CFG['voice']}, threads={cpu_threads})..."
                 )
                 _onnx_pipe = Kokoro.from_session(
                     session, str(_ONNX_VOICES)
                 )
-                log("[mouth] voice ready (kokoro-onnx fp16)")
+                log("[mouth] voice ready (kokoro-onnx fp32)")
                 return _onnx_pipe
             except Exception as exc:
                 log(
@@ -541,6 +542,7 @@ class Mouth:
                 self._last_audio_end = time.monotonic()
             except Exception as e:
                 log(f"[mouth] synth/play error: {e}")
+                log("[mouth] traceback: " + traceback.format_exc().replace("\n", " | "))
             finally:
                 # If another prefetched sentence is already ready, keep the
                 # speaking state continuous across the boundary.
@@ -568,15 +570,23 @@ class Mouth:
             if rate_ != rate:
                 rate = rate_
                 out = self._get_out(rate)
-            for i in range(0, len(pcm), block):
+
+            # Normalize ONNX/PyTorch output to contiguous mono int16.
+            # sounddevice is happiest with (frames, channels), while the
+            # visualizer waveform wants a flat mono vector.
+            mono = np.ascontiguousarray(
+                np.asarray(pcm, dtype=np.int16).reshape(-1)
+            )
+            for i in range(0, mono.size, block):
                 if self._stop.is_set():
                     self._cut()
                     return
-                out.write(pcm[i:i + block])
+                flat = mono[i:i + block]
+                out.write(flat.reshape(-1, 1))
                 if self._stop.is_set():
                     self._cut()
                     return
-                signals.feed_waveform(pcm[i:i + block])
+                signals.feed_waveform(flat)
 
     def _get_out(self, rate: int) -> sd.OutputStream:
         """The long-lived stream (audio law #1). Reopened only when the
