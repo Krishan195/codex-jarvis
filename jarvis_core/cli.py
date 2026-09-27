@@ -32,6 +32,18 @@ def _print_request(req: dict) -> None:
     print(f"Reject:  jarvis-core reject {req['id']}")
 
 
+def _user_service_state(name: str) -> str:
+    if not shutil.which("systemctl"):
+        return "unknown"
+    p = subprocess.run(
+        ["systemctl", "--user", "is-active", name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return (p.stdout or p.stderr or "unknown").strip()
+
+
 def cmd_status(_args) -> int:
     print(f"Secret service: {'ready' if secrets.available() else 'missing'}")
     try:
@@ -45,6 +57,16 @@ def cmd_status(_args) -> int:
         print(f"Chrome/Chromium: {browserctl.chrome_binary()}")
     except Exception as exc:
         print(f"Chrome/Chromium: not ready ({exc})")
+    print(f"Control broker: {_user_service_state('jarvis-broker.service')}")
+    print(f"Automation scheduler: {_user_service_state('jarvis-scheduler.service')}")
+    try:
+        from .model_router import model_for
+        fast = model_for("fast")
+        deep = model_for("deep")
+        expert = model_for("expert")
+        print(f"Model router: fast={fast[0]}/{fast[1]} deep={deep[0]}/{deep[1]} expert={expert[0]}/{expert[1]}")
+    except Exception as exc:
+        print(f"Model router: not ready ({exc})")
     print(f"Pending approvals: {len(approvals.pending())}")
     return 0
 
