@@ -15,6 +15,7 @@ from pathlib import Path
 import json
 import os
 import secrets as pysecrets
+import socket
 import sqlite3
 import time
 import urllib.error
@@ -31,6 +32,11 @@ from . import demo_exchange
 
 TELEGRAM_TOKEN_SECRET = "telegram-trading-bot-token"
 TELEGRAM_CONFIG_PATH = Path.home() / ".config" / "codex-jarvis" / "trading-telegram.json"
+
+
+class TelegramTransientError(RuntimeError):
+    """Temporary Telegram/network failure that is safe to retry."""
+
 
 
 @dataclass
@@ -471,6 +477,19 @@ class TelegramBot:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, socket.timeout) as exc:
+            # Long-poll transport timeouts are expected occasionally. Keep the
+            # token out of errors and let the caller retry safely.
+            raise TelegramTransientError("Telegram long-poll timeout") from exc
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, (TimeoutError, socket.timeout)):
+                raise TelegramTransientError("Telegram network timeout") from exc
+            # DNS resets / temporary network loss are also retryable; never
+            # stringify the URL because it contains the bot token.
+            raise TelegramTransientError(
+                f"Telegram network error ({type(reason).__name__ or 'URLError'})"
+            ) from exc
         except Exception as exc:
             # Do not stringify transport exceptions here; some urllib errors
             # can include the request URL, and the Bot API token is part of it.
@@ -503,15 +522,20 @@ class TelegramBot:
         )
 
     def updates(self, offset: int) -> list[dict[str, Any]]:
-        return self._call(
-            "getUpdates",
-            {
-                "offset": offset,
-                "timeout": self.cfg.poll_timeout_seconds,
-                "allowed_updates": ["message", "callback_query"],
-            },
-            timeout=self.cfg.poll_timeout_seconds + 10,
-        )
+        try:
+            return self._call(
+                "getUpdates",
+                {
+                    "offset": offset,
+                    "timeout": self.cfg.poll_timeout_seconds,
+                    "allowed_updates": ["message", "callback_query"],
+                },
+                timeout=self.cfg.poll_timeout_seconds + 10,
+            )
+        except TelegramTransientError:
+            # Telegram long polling may occasionally time out without any
+            # updates. Treat that as an empty poll, not a fatal service error.
+            return []
 
 
 def _fmt_price(value: float | None) -> str:
