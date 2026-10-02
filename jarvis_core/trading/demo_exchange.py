@@ -200,6 +200,23 @@ def open_orders(symbol: str | None = None) -> list[dict[str, Any]]:
     return list(rows)
 
 
+def user_trades(
+    symbol: str,
+    *,
+    start_time_ms: int | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "symbol": symbol.upper(),
+        "limit": max(1, min(int(limit), 1000)),
+    }
+    if start_time_ms is not None:
+        params["startTime"] = int(start_time_ms)
+    rows = _signed_request("GET", "/fapi/v1/userTrades", params)
+    return list(rows)
+
+
+
 def _validate_client_id(value: str) -> str:
     if not _CLIENT_ID_RE.fullmatch(value):
         raise ValueError(
@@ -260,6 +277,7 @@ def market_order(
         "type": "MARKET",
         "quantity": format(quantity, ".12g"),
         "newClientOrderId": cid,
+        "newOrderRespType": "RESULT",
     }
     if reduce_only:
         params["reduceOnly"] = "true"
@@ -387,9 +405,8 @@ def place_protection(
 ) -> dict[str, Any]:
     """Place stop and target for the actual filled quantity.
 
-    If the second protection order fails, the first one is deliberately left
-    in place; the caller's documented emergency policy must then reduce-only
-    close the position and surface the failure.
+    If the second leg fails, cancel the first leg before returning failure so a
+    later emergency close cannot leave a stale reduce-only conditional order.
     """
     direction = direction.upper()
     if direction not in {"LONG", "SHORT"}:
@@ -406,16 +423,25 @@ def place_protection(
         trigger_price=stop_loss,
         client_id=stop_id,
     )
-    target = conditional_market_order(
-        symbol,
-        exit_side,
-        quantity,
-        order_type="TAKE_PROFIT_MARKET",
-        trigger_price=take_profit,
-        client_id=target_id,
-    )
+    try:
+        target = conditional_market_order(
+            symbol,
+            exit_side,
+            quantity,
+            order_type="TAKE_PROFIT_MARKET",
+            trigger_price=take_profit,
+            client_id=target_id,
+        )
+    except Exception:
+        try:
+            cancel_order(symbol, client_id=stop_id)
+        except Exception:
+            pass
+        raise
     return {
         "stop": stop,
         "target": target,
+        "stop_client_id": stop_id,
+        "target_client_id": target_id,
         "quantity": quantity,
     }
