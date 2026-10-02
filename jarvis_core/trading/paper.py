@@ -121,38 +121,58 @@ class PaperBroker:
     def manage(self) -> list[dict[str, Any]]:
         outcomes: list[dict[str, Any]] = []
         for position in self.journal.open_positions():
-            candles = self.market.klines(position["symbol"], "1m", limit=180)
-            since = _iso_to_ms(position["last_checked_at"])
-            relevant = [c for c in candles if c.close_time > since]
-            stop = float(position["stop_loss"])
-            target = float(position["take_profit"])
+            try:
+                candles = self.market.klines(position["symbol"], "1m", limit=180)
+                since = _iso_to_ms(position["last_checked_at"])
+                relevant = [c for c in candles if c.close_time > since]
+                stop = float(position["stop_loss"])
+                target = float(position["take_profit"])
 
-            exit_reference: float | None = None
-            reason = ""
-            for candle in relevant:
-                if position["direction"] == "LONG":
-                    stop_hit = candle.low <= stop
-                    target_hit = candle.high >= target
+                exit_reference: float | None = None
+                reason = ""
+                for candle in relevant:
+                    if position["direction"] == "LONG":
+                        stop_hit = candle.low <= stop
+                        target_hit = candle.high >= target
+                    else:
+                        stop_hit = candle.high >= stop
+                        target_hit = candle.low <= target
+
+                    # If both levels occur in the same one-minute candle, assume
+                    # the stop happened first. This is conservative and avoids
+                    # inventing intrabar sequencing.
+                    if stop_hit:
+                        exit_reference = stop
+                        reason = "STOP"
+                        break
+                    if target_hit:
+                        exit_reference = target
+                        reason = "TAKE_PROFIT"
+                        break
+
+                if exit_reference is not None:
+                    outcomes.append(self._close(position, exit_reference, reason))
                 else:
-                    stop_hit = candle.high >= stop
-                    target_hit = candle.low <= target
-
-                # If both levels occur in the same one-minute candle, assume
-                # the stop happened first. This is conservative and avoids
-                # inventing intrabar sequencing.
-                if stop_hit:
-                    exit_reference = stop
-                    reason = "STOP"
-                    break
-                if target_hit:
-                    exit_reference = target
-                    reason = "TAKE_PROFIT"
-                    break
-
-            if exit_reference is not None:
-                outcomes.append(self._close(position, exit_reference, reason))
-            else:
-                self.journal.touch_position(int(position["id"]))
+                    self.journal.touch_position(int(position["id"]))
+            except Exception as exc:
+                # A data/service failure must not silently mark protection as
+                # healthy. Keep the position open, record the failure, and let
+                # the next cycle retry management before considering entries.
+                self.journal.event(
+                    "PAPER_PROTECTION_CHECK_FAILED",
+                    {
+                        "position_id": int(position["id"]),
+                        "error": str(exc)[:500],
+                    },
+                    position["symbol"],
+                )
+                outcomes.append(
+                    {
+                        "position_id": int(position["id"]),
+                        "status": "PROTECTION_CHECK_FAILED",
+                        "error": str(exc)[:500],
+                    }
+                )
         return outcomes
 
     def close_all(self, reason: str = "MANUAL_CLOSE_ALL") -> list[dict[str, Any]]:
