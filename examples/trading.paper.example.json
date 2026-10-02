@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "mode": "PAPER",
+  "enabled": false,
+  "paused": false,
+  "market_type": "futures",
+  "permitted_symbols": ["BTCUSDT", "ETHUSDT"],
+  "strategy": {
+    "version": "trend-pullback-v1",
+    "signal_interval": "15m",
+    "context_intervals": ["1h", "4h"],
+    "ema_fast": 20,
+    "ema_slow": 50,
+    "rsi_period": 14,
+    "long_rsi_min": 52.0,
+    "long_rsi_max": 68.0,
+    "short_rsi_min": 32.0,
+    "short_rsi_max": 48.0,
+    "atr_period": 14,
+    "min_atr_percent": 0.25,
+    "max_atr_percent": 2.5,
+    "min_volume_ratio": 1.0,
+    "max_spread_bps": 5.0,
+    "max_adverse_book_imbalance": 0.25,
+    "stop_atr_buffer": 0.5,
+    "reward_risk": 2.0,
+    "signal_expiry_minutes": 15
+  },
+  "costs": {
+    "taker_fee_bps": 5.0,
+    "slippage_bps": 2.0,
+    "include_one_funding_interval": true
+  },
+  "risk": {
+    "allocated_capital_quote": 10000.0,
+    "max_leverage": 2.0,
+    "risk_per_trade_percent": 0.5,
+    "max_aggregate_exposure_percent": 50.0,
+    "max_simultaneous_positions": 2,
+    "daily_loss_limit_percent": 2.0,
+    "max_drawdown_percent": 10.0
+  },
+  "stale_grace_seconds": 120,
+  "paper_loop_seconds": 60
+}
