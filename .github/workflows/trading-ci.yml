@@ -16,6 +16,15 @@ jobs:
       - name: Compile trading modules
         run: python -m compileall -q jarvis_core/trading
       - name: Run deterministic trading tests
-        run: python -m unittest -v tests.test_trading_paper tests.test_trading_telegram
+        run: |
+          set -o pipefail
+          python -m unittest -v tests.test_trading_paper tests.test_trading_telegram 2>&1 | tee trading-test-output.txt
+      - name: Upload trading test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-test-output
+          path: trading-test-output.txt
+          retention-days: 3
       - name: Validate installer shell
         run: bash -n tools/install_trading_agent.sh
