@@ -121,6 +121,13 @@ def generate_proposal(
     long_ok = all(ok for ok, _ in long_checks)
     short_ok = all(ok for ok, _ in short_checks)
 
+    if h1["ema_fast"] > h1["ema_slow"] and h4["ema_fast"] > h4["ema_slow"]:
+        regime = "trend-up"
+    elif h1["ema_fast"] < h1["ema_slow"] and h4["ema_fast"] < h4["ema_slow"]:
+        regime = "trend-down"
+    else:
+        regime = "mixed"
+
     direction: str | None = None
     checks: list[tuple[bool, str]]
     if long_ok and not short_ok:
@@ -174,10 +181,13 @@ def generate_proposal(
         signal_timestamp=signal_time,
         expires_at=expires_at,
         order_type="MARKET",
+        market_regime=regime,
+        entry_conditions=[text for _ok, text in checks],
         entry_reference=entry,
         stop_loss=stop,
         take_profit=target,
         leverage=float(leverage),
+        spread_bps=book.spread_bps,
         evidence=evidence,
         failure_reasons=failures,
         data_health={
