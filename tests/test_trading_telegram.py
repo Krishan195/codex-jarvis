@@ -383,5 +383,49 @@ class ExecutionBoundaryTests(unittest.TestCase):
                     )
 
 
+class SymbolConfigTests(unittest.TestCase):
+    def test_symbol_config_uses_account_config_endpoint(self):
+        with patch.object(
+            demo_exchange,
+            "_signed_request",
+            return_value=[
+                {
+                    "symbol": "BTCUSDT",
+                    "marginType": "ISOLATED",
+                    "leverage": 2,
+                    "isAutoAddMargin": "false",
+                    "maxNotionalValue": "1000000"
+                }
+            ],
+        ) as signed:
+            result = demo_exchange.symbol_config("BTCUSDT")
+        signed.assert_called_once_with(
+            "GET",
+            "/fapi/v1/symbolConfig",
+            {"symbol": "BTCUSDT"},
+        )
+        self.assertEqual(result["margin_type"], "ISOLATED")
+        self.assertEqual(result["leverage"], 2.0)
+
+    def test_health_reads_symbol_config_even_without_open_position(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ApprovalStore(Path(td) / "state.sqlite3")
+            service = service_with_store(store)
+            with patch(
+                "jarvis_core.trading.telegram_approval.demo_exchange.symbol_config",
+                side_effect=lambda symbol: {
+                    "symbol": symbol,
+                    "margin_type": "ISOLATED",
+                    "leverage": 2.0,
+                },
+            ), patch(
+                "jarvis_core.trading.telegram_approval.demo_exchange.auth_health",
+                return_value={"authenticated": True},
+            ):
+                health = service.health()
+            self.assertTrue(health["symbols"]["BTCUSDT"]["margin_mode_matches"])
+            self.assertTrue(health["symbols"]["BTCUSDT"]["leverage_matches"])
+
+
 if __name__ == "__main__":
     unittest.main()
