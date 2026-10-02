@@ -15,7 +15,7 @@ jobs:
           python-version: "3.12"
       - name: Compile trading modules
         run: python -m compileall -q jarvis_core/trading
-      - name: Run deterministic PAPER tests
-        run: python -m unittest -v tests.test_trading_paper
+      - name: Run deterministic trading tests
+        run: python -m unittest -v tests.test_trading_paper tests.test_trading_telegram
       - name: Validate installer shell
         run: bash -n tools/install_trading_agent.sh
