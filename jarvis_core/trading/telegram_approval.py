@@ -583,6 +583,33 @@ class DemoTelegramApprovalService:
         self.bot = bot or TelegramBot(self.telegram_cfg)
         self.engine = TradingEngine(self.trading_cfg)
 
+    def health(self) -> dict[str, Any]:
+        symbols: dict[str, Any] = {}
+        for symbol in self.trading_cfg.permitted_symbols:
+            rows = demo_exchange.positions(symbol)
+            row = rows[0] if rows else {}
+            actual_margin = str(row.get("margin_type") or "UNKNOWN").upper()
+            actual_leverage = float(row.get("leverage") or 0)
+            symbols[symbol] = {
+                "configured_margin_mode": self.trading_cfg.margin_mode,
+                "actual_margin_mode": actual_margin,
+                "margin_mode_matches": actual_margin == self.trading_cfg.margin_mode,
+                "configured_leverage": float(self.trading_cfg.risk.max_leverage),
+                "actual_leverage": actual_leverage,
+                "leverage_matches": actual_leverage == float(self.trading_cfg.risk.max_leverage),
+            }
+        return {
+            "environment": "DEMO",
+            "live_execution_available": False,
+            "telegram_user_id": self.telegram_cfg.user_id,
+            "telegram_chat_id": self.telegram_cfg.chat_id,
+            "approval_expiry_seconds": self.telegram_cfg.approval_expiry_seconds,
+            "price_tolerance_bps": self.telegram_cfg.price_tolerance_bps,
+            "paused": self.trading_cfg.paused,
+            "demo_api": demo_exchange.auth_health(),
+            "symbols": symbols,
+        }
+
     def _demo_state(self, symbol: str) -> tuple[AccountState, float, str, float]:
         balances = demo_exchange.balance()
         usdt = next((x for x in balances if x.get("asset") == "USDT"), None)
