@@ -50,15 +50,19 @@ class TradeProposal:
     signal_timestamp: int
     expires_at: int
     order_type: str
-    entry_reference: float | None
+    market_regime: str = "unknown"
+    entry_conditions: list[str] = field(default_factory=list)
+    entry_reference: float | None = None
     stop_loss: float | None
     take_profit: float | None
-    leverage: float
+    leverage: float = 1.0
+    spread_bps: float = 0.0
     quantity: float = 0.0
     estimated_loss_at_stop: float = 0.0
     estimated_entry_fee: float = 0.0
     estimated_exit_fee: float = 0.0
     estimated_slippage: float = 0.0
+    estimated_spread_cost: float = 0.0
     estimated_funding: float = 0.0
     evidence: list[str] = field(default_factory=list)
     failure_reasons: list[str] = field(default_factory=list)
@@ -75,15 +79,19 @@ class TradeProposal:
             "signal_timestamp": self.signal_timestamp,
             "expires_at": self.expires_at,
             "order_type": self.order_type,
+            "market_regime": self.market_regime,
+            "entry_conditions": self.entry_conditions,
             "entry_reference": self.entry_reference,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
             "leverage": self.leverage,
+            "spread_bps": self.spread_bps,
             "quantity": self.quantity,
             "estimated_loss_at_stop": self.estimated_loss_at_stop,
             "estimated_entry_fee": self.estimated_entry_fee,
             "estimated_exit_fee": self.estimated_exit_fee,
             "estimated_slippage": self.estimated_slippage,
+            "estimated_spread_cost": self.estimated_spread_cost,
             "estimated_funding": self.estimated_funding,
             "evidence": self.evidence,
             "failure_reasons": self.failure_reasons,
