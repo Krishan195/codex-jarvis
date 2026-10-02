@@ -303,7 +303,7 @@ class ExecutionFlowTests(unittest.TestCase):
 
             self.assertEqual(
                 store.get(row["proposal_id"])["status"],
-                "EXECUTING",
+                "EXECUTION_UNKNOWN",
             )
 
 
