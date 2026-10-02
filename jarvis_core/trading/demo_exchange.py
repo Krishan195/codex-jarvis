@@ -187,6 +187,8 @@ def positions(symbol: str | None = None) -> list[dict[str, Any]]:
                     "mark_price": float(row.get("markPrice") or 0),
                     "unrealized_profit": float(row.get("unRealizedProfit") or row.get("unrealizedProfit") or 0),
                     "liquidation_price": float(row.get("liquidationPrice") or 0),
+                    "leverage": float(row.get("leverage") or 0),
+                    "margin_type": row.get("marginType"),
                 }
             )
     return out
@@ -331,3 +333,89 @@ def close_symbol_position(symbol: str) -> list[dict[str, Any]]:
             )
         )
     return results
+
+
+
+def conditional_market_order(
+    symbol: str,
+    side: str,
+    quantity: float,
+    *,
+    order_type: str,
+    trigger_price: float,
+    client_id: str,
+) -> dict[str, Any]:
+    """Place one reduce-only conditional Demo protection order.
+
+    Binance USD-M advertises STOP_MARKET and TAKE_PROFIT_MARKET for these
+    symbols. Actual acceptance is still verified from the exchange response.
+    """
+    side = side.upper()
+    order_type = order_type.upper()
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    if order_type not in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}:
+        raise ValueError("unsupported protective order type")
+    if quantity <= 0 or trigger_price <= 0:
+        raise ValueError("quantity and trigger_price must be positive")
+    cid = _validate_client_id(client_id)
+    return _signed_request(
+        "POST",
+        "/fapi/v1/order",
+        {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": order_type,
+            "quantity": format(quantity, ".12g"),
+            "stopPrice": format(trigger_price, ".12g"),
+            "reduceOnly": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "true",
+            "newClientOrderId": cid,
+        },
+    )
+
+
+def place_protection(
+    symbol: str,
+    *,
+    direction: str,
+    quantity: float,
+    stop_loss: float,
+    take_profit: float,
+    proposal_id: str,
+) -> dict[str, Any]:
+    """Place stop and target for the actual filled quantity.
+
+    If the second protection order fails, the first one is deliberately left
+    in place; the caller's documented emergency policy must then reduce-only
+    close the position and surface the failure.
+    """
+    direction = direction.upper()
+    if direction not in {"LONG", "SHORT"}:
+        raise ValueError("direction must be LONG or SHORT")
+    exit_side = "SELL" if direction == "LONG" else "BUY"
+    base = proposal_id[:8]
+    stop_id = make_client_id(symbol, f"s-{base}")
+    target_id = make_client_id(symbol, f"t-{base}")
+    stop = conditional_market_order(
+        symbol,
+        exit_side,
+        quantity,
+        order_type="STOP_MARKET",
+        trigger_price=stop_loss,
+        client_id=stop_id,
+    )
+    target = conditional_market_order(
+        symbol,
+        exit_side,
+        quantity,
+        order_type="TAKE_PROFIT_MARKET",
+        trigger_price=take_profit,
+        client_id=target_id,
+    )
+    return {
+        "stop": stop,
+        "target": target,
+        "quantity": quantity,
+    }
