@@ -292,6 +292,24 @@ Useful commands:
 - `jarvis-trader demo-balance`
 - `jarvis-trader demo-positions`
 - `jarvis-trader demo-order-test SYMBOL SIDE QTY`
+- `jarvis-trader telegram-health`
+- `jarvis-trader telegram-pending`
+- `jarvis-trader telegram-loop --scan-seconds 60`
+
+All exposure-increasing Binance Demo orders require a stored, unexpired,
+single-use Telegram approval from the configured private chat and configured
+Telegram user. Delivery/read status is never approval. Rejection, expiry,
+duplicate clicks, changed price beyond tolerance, changed quantity/leverage,
+changed stop/target, uncertain account state, pending orders, or failed
+revalidation mean no new order.
+
+The exchange execution boundary independently checks that the exact proposal
+was approved and atomically claimed before allowing a Demo exposure increase.
+Do not invoke low-level exchange functions to work around this control.
+
+Reduce-only emergency protection/closing may execute without a second approval
+only when it is part of the protection plan stated in the approved proposal.
+Direct discretionary increases in exposure always require a new proposal.
 
 Never invent prices, indicators, fills, balances, or results. Use completed
 candles for candle signals and fail closed on stale/inconsistent data. Treat
