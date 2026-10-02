@@ -1,0 +1,21 @@
+name: Trading Engine CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  trading-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile trading modules
+        run: python -m compileall -q jarvis_core/trading
+      - name: Run deterministic PAPER tests
+        run: python -m unittest -v tests.test_trading_paper
+      - name: Validate installer shell
+        run: bash -n tools/install_trading_agent.sh
