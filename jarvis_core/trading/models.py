@@ -53,8 +53,8 @@ class TradeProposal:
     market_regime: str = "unknown"
     entry_conditions: list[str] = field(default_factory=list)
     entry_reference: float | None = None
-    stop_loss: float | None
-    take_profit: float | None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     leverage: float = 1.0
     spread_bps: float = 0.0
     quantity: float = 0.0
