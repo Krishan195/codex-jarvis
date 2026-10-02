@@ -194,6 +194,12 @@ def cmd_demo_close(args) -> int:
     return 0
 
 
+def cmd_telegram_health(_args) -> int:
+    service = DemoTelegramApprovalService()
+    _json(service.health())
+    return 0
+
+
 def cmd_telegram_discover(_args) -> int:
     rows = discover_private_chats()
     if not rows:
@@ -351,6 +357,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("demo-close")
     s.add_argument("symbol")
     s.set_defaults(func=cmd_demo_close)
+
+    s = sub.add_parser("telegram-health")
+    s.set_defaults(func=cmd_telegram_health)
 
     s = sub.add_parser("telegram-discover")
     s.set_defaults(func=cmd_telegram_discover)
