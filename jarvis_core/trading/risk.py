@@ -42,11 +42,12 @@ def apply_risk(
     max_qty: float,
     min_notional: float,
     funding_rate: float | None = None,
+    require_enabled: bool = True,
 ) -> TradeProposal:
     errors: list[str] = []
     if proposal.decision != "TRADE":
         return proposal
-    if not cfg.enabled:
+    if require_enabled and not cfg.enabled:
         errors.append("paper trading is disabled")
     if cfg.paused:
         errors.append("new entries are paused")
