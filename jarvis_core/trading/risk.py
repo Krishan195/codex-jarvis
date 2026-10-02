@@ -13,8 +13,9 @@ class AccountState:
     open_positions: int
     aggregate_notional: float
     realized_pnl_today: float
-    current_equity: float
-    peak_equity: float
+    unrealized_pnl: float = 0.0
+    current_equity: float = 0.0
+    peak_equity: float = 0.0
     state_certain: bool = True
 
 
@@ -62,7 +63,8 @@ def apply_risk(
 
     capital = cfg.risk.allocated_capital_quote
     daily_limit = capital * cfg.risk.daily_loss_limit_percent / 100.0
-    if state.realized_pnl_today <= -daily_limit:
+    daily_marked_pnl = state.realized_pnl_today + state.unrealized_pnl
+    if daily_marked_pnl <= -daily_limit:
         errors.append("daily loss limit reached")
 
     drawdown = 0.0
