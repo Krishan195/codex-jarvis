@@ -651,7 +651,11 @@ class DemoTelegramApprovalService:
             return None
         if actual_leverage != float(self.trading_cfg.risk.max_leverage):
             return None
-        proposal = self.engine.proposal(symbol, account_state_override=demo_state)
+        proposal = self.engine.proposal(
+            symbol,
+            account_state_override=demo_state,
+            require_enabled=False,
+        )
         if proposal.decision != "TRADE":
             return None
         payload = proposal.as_dict()
@@ -707,6 +711,7 @@ class DemoTelegramApprovalService:
         fresh = self.engine.proposal(
             old["symbol"],
             account_state_override=demo_state,
+            require_enabled=False,
         ).as_dict()
         if fresh["decision"] != "TRADE":
             raise RuntimeError("Signal no longer qualifies after approval.")
