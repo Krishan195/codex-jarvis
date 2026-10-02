@@ -263,3 +263,38 @@ funding is estimated rather than accrued from historical settlement events, and
 public REST snapshots are not a substitute for an exchange user-data stream.
 
 PAPER or testnet results do not establish future profitability.
+
+
+## Binance Futures Demo integration
+
+The repository includes an authenticated USD-M Futures Demo client for
+validating real exchange API mechanics with virtual funds.
+
+The client is hard-pinned to:
+
+```text
+https://demo-fapi.binance.com
+```
+
+It has no production/live Futures base URL.
+
+Credentials are read only from Linux Secret Service:
+
+```text
+binance-demo-api-key
+binance-demo-api-secret
+```
+
+Supported Demo commands currently cover authentication health, balances,
+positions, open orders, signed order-test validation, explicit virtual MARKET
+orders, query-by-client-id, cancel, and a conservative close-position helper.
+
+Market submission uses a durable client order ID. If an order submission
+encounters an ambiguous network failure, the client queries the order by that
+ID before any retry is considered. If reconciliation itself fails, the command
+returns an explicit ambiguous-state error rather than retrying blindly.
+
+Autonomous Demo strategy execution is not enabled yet. Before enabling it, the
+next exchange-integration phase must add and test exchange-hosted protective
+orders, partial-fill handling, startup reconciliation, hedge-mode behavior,
+cancel/fill races, and protection-failure policy.
