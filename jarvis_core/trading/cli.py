@@ -147,6 +147,24 @@ def cmd_demo_balance(_args) -> int:
     return 0
 
 
+def cmd_demo_symbol_config(args) -> int:
+    _json(demo_exchange.symbol_config(args.symbol))
+    return 0
+
+
+def cmd_demo_set_symbol(args) -> int:
+    # Explicit DEMO-only account configuration; never called automatically.
+    margin = demo_exchange.change_margin_type(args.symbol, args.margin)
+    leverage = demo_exchange.change_leverage(args.symbol, args.leverage)
+    _json({
+        "environment": "DEMO",
+        "margin_result": margin,
+        "leverage_result": leverage,
+        "effective": demo_exchange.symbol_config(args.symbol),
+    })
+    return 0
+
+
 def cmd_demo_positions(args) -> int:
     _json(demo_exchange.positions(args.symbol))
     return 0
@@ -319,6 +337,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("demo-balance")
     s.set_defaults(func=cmd_demo_balance)
+
+    s = sub.add_parser("demo-symbol-config")
+    s.add_argument("symbol")
+    s.set_defaults(func=cmd_demo_symbol_config)
+
+    s = sub.add_parser("demo-set-symbol")
+    s.add_argument("symbol")
+    s.add_argument("--leverage", type=int, required=True)
+    s.add_argument("--margin", choices=["ISOLATED", "CROSSED", "isolated", "crossed"], required=True)
+    s.set_defaults(func=cmd_demo_set_symbol)
 
     s = sub.add_parser("demo-positions")
     s.add_argument("--symbol")
