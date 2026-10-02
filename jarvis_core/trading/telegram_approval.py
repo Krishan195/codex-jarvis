@@ -118,6 +118,13 @@ class ApprovalStore:
             );
             INSERT OR IGNORE INTO telegram_update_state(singleton,last_update_id)
             VALUES(1,0);
+
+            CREATE TABLE IF NOT EXISTS telegram_risk_state (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                peak_equity REAL NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO telegram_risk_state(singleton,peak_equity)
+            VALUES(1,0);
             """
         )
         columns = {
@@ -349,6 +356,23 @@ class ApprovalStore:
             """
         ).fetchall()
         return [self.get(r["proposal_id"]) for r in rows]
+
+    def update_peak_equity(self, current_equity: float) -> float:
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT peak_equity FROM telegram_risk_state WHERE singleton=1"
+            ).fetchone()
+            peak = max(float(row["peak_equity"] or 0), float(current_equity))
+            self.conn.execute(
+                "UPDATE telegram_risk_state SET peak_equity=? WHERE singleton=1",
+                (peak,),
+            )
+            self.conn.commit()
+            return peak
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_offset(self) -> int:
         row = self.conn.execute(
@@ -624,14 +648,44 @@ class DemoTelegramApprovalService:
             for x in active
         )
         unrealized = sum(float(x["unrealized_profit"]) for x in active)
+
+        now = datetime.now(timezone.utc)
+        day_start = datetime(
+            now.year, now.month, now.day, tzinfo=timezone.utc
+        )
+        day_start_ms = int(day_start.timestamp() * 1000)
+        realized_today = 0.0
+        for permitted in self.trading_cfg.permitted_symbols:
+            for trade in demo_exchange.user_trades(
+                permitted,
+                start_time_ms=day_start_ms,
+            ):
+                realized_today += float(trade.get("realizedPnl") or 0)
+                if str(trade.get("commissionAsset") or "").upper() == "USDT":
+                    realized_today -= float(trade.get("commission") or 0)
+
+        current_equity = (
+            min(balance, self.trading_cfg.risk.allocated_capital_quote)
+            + unrealized
+        )
+        peak_equity = self.store.update_peak_equity(
+            max(current_equity, self.trading_cfg.risk.allocated_capital_quote)
+        )
+
+        pending = demo_exchange.open_orders()
+        unapproved_pending_entries = [
+            order for order in pending
+            if not bool(order.get("reduceOnly", False))
+        ]
+
         state = AccountState(
             open_positions=len(active),
             aggregate_notional=exposure,
-            realized_pnl_today=0.0,
+            realized_pnl_today=realized_today,
             unrealized_pnl=unrealized,
-            current_equity=min(balance, self.trading_cfg.risk.allocated_capital_quote) + unrealized,
-            peak_equity=self.trading_cfg.risk.allocated_capital_quote,
-            state_certain=True,
+            current_equity=current_equity,
+            peak_equity=peak_equity,
+            state_certain=not unapproved_pending_entries,
         )
         margin_mode = "UNKNOWN"
         actual_leverage = 0.0
