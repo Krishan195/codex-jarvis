@@ -364,6 +364,55 @@ class ApprovalStore:
         self.conn.commit()
 
 
+def discover_private_chats() -> list[dict[str, Any]]:
+    """Return only IDs needed for secure setup; never print message bodies."""
+    token = secrets.get(TELEGRAM_TOKEN_SECRET)
+    if not token:
+        raise RuntimeError(
+            "Telegram bot token is missing. Store it with "
+            "'jarvis-core secret-set telegram-trading-bot-token'."
+        )
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    req = urllib.request.Request(
+        url,
+        data=urllib.parse.urlencode({"timeout": "0"}).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Telegram discovery failed ({type(exc).__name__})"
+        ) from exc
+    if not result.get("ok"):
+        raise RuntimeError("Telegram discovery request was rejected.")
+
+    found: dict[tuple[int, int], dict[str, Any]] = {}
+    for update in result.get("result") or []:
+        message = update.get("message") or {}
+        if not message and update.get("callback_query"):
+            message = (update["callback_query"].get("message") or {})
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        if update.get("callback_query"):
+            sender = update["callback_query"].get("from") or sender
+        if str(chat.get("type") or "") != "private":
+            continue
+        try:
+            user_id = int(sender.get("id"))
+            chat_id = int(chat.get("id"))
+        except Exception:
+            continue
+        found[(user_id, chat_id)] = {
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "chat_type": "private",
+        }
+    return list(found.values())
+
+
 class TelegramBot:
     def __init__(self, cfg: TelegramApprovalConfig):
         self.cfg = cfg
@@ -399,7 +448,11 @@ class TelegramBot:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except Exception as exc:
-            raise RuntimeError(f"Telegram API failure: {exc}") from exc
+            # Do not stringify transport exceptions here; some urllib errors
+            # can include the request URL, and the Bot API token is part of it.
+            raise RuntimeError(
+                f"Telegram API failure ({type(exc).__name__})"
+            ) from exc
         if not result.get("ok"):
             raise RuntimeError(f"Telegram API rejected request: {result}")
         return result["result"]
@@ -666,9 +719,11 @@ class DemoTelegramApprovalService:
                 return latest
             time.sleep(0.75)
 
-        if str(latest.get("status")) == "PARTIALLY_FILLED":
-            # Freeze the actual exposure before placing protection; otherwise
-            # later fills could exceed the quantity we protect.
+        if str(latest.get("status")) not in {
+            "FILLED", "CANCELED", "REJECTED", "EXPIRED",
+        }:
+            # Freeze the actual exposure before placing protection; otherwise a
+            # later fill could exceed the approved/protected quantity.
             try:
                 demo_exchange.cancel_order(symbol, client_id=client_id)
             finally:
@@ -696,14 +751,30 @@ class DemoTelegramApprovalService:
             p["symbol"],
             "p" + proposal_id[:10],
         )
-        result = demo_exchange.market_order(
-            p["symbol"],
-            side,
-            float(p["quantity"]),
-            client_id=client_id,
-            reduce_only=False,
-            test_only=False,
-        )
+        try:
+            result = demo_exchange.market_order(
+                p["symbol"],
+                side,
+                float(p["quantity"]),
+                client_id=client_id,
+                reduce_only=False,
+                test_only=False,
+            )
+        except Exception as exc:
+            # demo_exchange already tries query-by-client-id reconciliation on
+            # ambiguous network errors. If it still raises, do not retry here.
+            self.store.mark(
+                proposal_id,
+                "EXECUTION_UNKNOWN",
+                reason=str(exc),
+                client_id=client_id,
+            )
+            self.bot.send(
+                f"DEMO — Execution state UNKNOWN for proposal {proposal_id}. "
+                "No automatic retry will occur. Reconcile the client order ID "
+                "before any new entry."
+            )
+            raise
         response = result.get("response") or {}
         order_id = str(response.get("orderId") or "")
         self.bot.send(
@@ -725,6 +796,28 @@ class DemoTelegramApprovalService:
                 f"DEMO — Order status for {p['symbol']}: {status}; "
                 "no fill has been reported yet."
             )
+
+        if executed_qty <= 0 and status in {
+            "CANCELED", "REJECTED", "EXPIRED",
+        }:
+            final = {
+                "entry": actual,
+                "protection": {},
+                "revalidation": check,
+            }
+            self.store.mark(
+                proposal_id,
+                "ORDER_FAILED",
+                reason=f"Binance terminal order status: {status}",
+                result=final,
+                order_id=order_id,
+                client_id=client_id,
+            )
+            self.bot.send(
+                f"DEMO — Entry did not fill for {p['symbol']}. "
+                f"Final order status: {status}."
+            )
+            return final
 
         protection: dict[str, Any] = {}
         if executed_qty > 0:
