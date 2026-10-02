@@ -13,6 +13,7 @@ from jarvis_core.trading.telegram_approval import (
 )
 from jarvis_core.trading.config import TradingConfig, RiskConfig
 from jarvis_core.trading.models import BookSnapshot, TradeProposal
+from jarvis_core.trading import demo_exchange
 
 
 def proposal_payload() -> dict:
