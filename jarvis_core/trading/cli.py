@@ -15,6 +15,7 @@ from .telegram_approval import (
     DemoTelegramApprovalService,
     TelegramApprovalConfig,
     write_telegram_config,
+    discover_private_chats,
 )
 
 
@@ -193,6 +194,18 @@ def cmd_demo_close(args) -> int:
     return 0
 
 
+def cmd_telegram_discover(_args) -> int:
+    rows = discover_private_chats()
+    if not rows:
+        print(
+            "No private Telegram chat found yet. Send /start to your bot, "
+            "then run this command again."
+        )
+    else:
+        _json(rows)
+    return 0
+
+
 def cmd_telegram_config(args) -> int:
     cfg = TelegramApprovalConfig(
         user_id=args.user_id,
@@ -338,6 +351,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("demo-close")
     s.add_argument("symbol")
     s.set_defaults(func=cmd_demo_close)
+
+    s = sub.add_parser("telegram-discover")
+    s.set_defaults(func=cmd_telegram_discover)
 
     s = sub.add_parser("telegram-config")
     s.add_argument("--user-id", type=int, required=True)
