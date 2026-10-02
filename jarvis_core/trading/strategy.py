@@ -156,7 +156,7 @@ def generate_proposal(
         checks = long_checks if sum(x for x, _ in long_checks) >= sum(x for x, _ in short_checks) else short_checks
 
     evidence = [text for ok, text in checks if ok]
-    failures = [text for ok, text in checks if not ok]
+    failures = [f"FAILED condition: {text}" for ok, text in checks if not ok]
     evidence.extend(
         [
             f"15m RSI={s['rsi']:.2f}",
