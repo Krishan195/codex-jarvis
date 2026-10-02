@@ -298,3 +298,173 @@ Autonomous Demo strategy execution is not enabled yet. Before enabling it, the
 next exchange-integration phase must add and test exchange-hosted protective
 orders, partial-fill handling, startup reconciliation, hedge-mode behavior,
 cancel/fill races, and protection-failure policy.
+
+
+## Telegram approval gate
+
+The exchange-side Demo workflow is:
+
+```text
+analyze -> deterministic proposal -> Telegram message -> explicit button
+approval -> revalidate -> Binance Demo order -> query actual status ->
+protect actual fill -> notify
+```
+
+Production/live Binance order execution is not implemented by this build.
+
+### Security model
+
+The Telegram bot token is stored in Linux Secret Service under:
+
+```text
+telegram-trading-bot-token
+```
+
+The Binance Demo API key and secret remain under:
+
+```text
+binance-demo-api-key
+binance-demo-api-secret
+```
+
+They are not stored in the repository, Markdown Memory, trading config, or
+Telegram messages.
+
+Authorized Telegram user/chat IDs are non-secret identifiers stored in:
+
+```text
+~/.config/codex-jarvis/trading-telegram.json
+```
+
+The file is written mode 0600 where supported.
+
+Only callback buttons received from the exact configured Telegram user ID in
+the exact configured private chat are accepted. Message delivery/read state is
+not approval.
+
+Approval records are persisted in the trading SQLite database. They are
+single-use and default to a 120-second expiry. A unique signal key prevents the
+same symbol/strategy/candle/direction from generating duplicate executable
+proposals after restarts.
+
+The Demo exchange layer separately verifies that a proposal is in EXECUTING
+state, has a verified Telegram approver, is unexpired, and matches the exact
+symbol, side, and quantity before an exposure-increasing order can be submitted.
+
+### Revalidation
+
+After approval and before submission, the service checks again:
+
+- signal still qualifies
+- original completed-candle signal timestamp is unchanged
+- direction, strategy version, quantity, leverage, stop and target are unchanged
+- current executable price is inside the approved tolerance
+- Demo balance/account state can be read
+- configured margin mode and leverage still match the Demo account
+- no existing position exists for the symbol
+- no pending standard order exists for the symbol
+- current Binance symbol filters/risk checks still pass
+- proposal approval has not expired
+
+Any difference invalidates the proposal. The service does not resize upward,
+change leverage, chase price, or move stop/target silently.
+
+### Fill and protection behavior
+
+The service first reports that Binance accepted an entry, then separately
+queries the order. It does not call an accepted-but-unfilled order a completed
+trade.
+
+If an order remains non-terminal during the confirmation window, the service
+attempts to cancel it and re-queries the order before deciding the actual
+filled quantity.
+
+Protection is then placed for the quantity actually filled:
+
+- reduce-only STOP_MARKET using MARK_PRICE
+- reduce-only TAKE_PROFIT_MARKET using MARK_PRICE
+
+If one protection leg cannot be established, any already-created sibling
+protection is canceled where possible and the disclosed emergency policy is a
+reduce-only market close. The user is notified immediately. If that emergency
+close also fails, the proposal is marked as a critical protection/emergency
+failure rather than silently continuing.
+
+After the position disappears, the loop cancels known leftover sibling
+protection orders where possible, queries Demo user trades since execution,
+and reports the available realized P&L and commission data.
+
+### Telegram setup
+
+1. Create a private bot with Telegram BotFather.
+2. Store its token locally. Never paste it into chat:
+
+```bash
+jarvis-core secret-set telegram-trading-bot-token
+```
+
+3. Open the bot in Telegram and send `/start`.
+4. Discover only the IDs needed for authorization:
+
+```bash
+jarvis-trader telegram-discover
+```
+
+The command intentionally prints IDs/chat type only, not message bodies.
+
+5. Save the authorized private user/chat IDs:
+
+```bash
+jarvis-trader telegram-config \
+  --user-id YOUR_TELEGRAM_USER_ID \
+  --chat-id YOUR_PRIVATE_CHAT_ID \
+  --expiry 120 \
+  --price-tolerance-bps 10
+```
+
+6. Verify the complete gate:
+
+```bash
+jarvis-trader telegram-health
+jarvis-trader telegram-pending
+```
+
+For Futures Demo, the Binance account's leverage and margin mode for each
+permitted symbol must match the local configuration before a proposal can be
+sent. Baseline defaults are 2x and ISOLATED.
+
+7. To test a single qualifying symbol when a setup exists:
+
+```bash
+jarvis-trader telegram-propose BTCUSDT
+```
+
+8. To run the approval service and periodically look for qualifying Demo
+proposals:
+
+```bash
+jarvis-trader telegram-loop --scan-seconds 60
+```
+
+Telegram commands accepted only from the authorized private user/chat:
+
+```text
+/status
+/pending
+/positions
+/pause
+/resume
+```
+
+`/pause` prevents new proposals but does not cancel existing protective
+orders.
+
+### Demo-only boundary
+
+The authenticated execution client is hard-pinned to Binance Futures Demo.
+A direct `jarvis-trader demo-market` exposure-increasing order is blocked.
+The non-trading `demo-order-test` command remains available for signed API
+validation, and reduce-only emergency closing remains available.
+
+This phase intentionally does not contain a production/live Binance order
+endpoint or a live-mode switch.
