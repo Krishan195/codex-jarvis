@@ -173,6 +173,66 @@ def balance() -> list[dict[str, Any]]:
     return out
 
 
+def symbol_config(symbol: str) -> dict[str, Any]:
+    """Read per-symbol Futures account configuration.
+
+    Binance moved leverage/margin configuration out of Position Information V3;
+    use /fapi/v1/symbolConfig for these fields.
+    """
+    rows = _signed_request(
+        "GET",
+        "/fapi/v1/symbolConfig",
+        {"symbol": symbol.upper()},
+    )
+    if isinstance(rows, dict):
+        row = rows
+    else:
+        row = next(
+            (x for x in rows if str(x.get("symbol") or "").upper() == symbol.upper()),
+            None,
+        )
+    if not row:
+        raise DemoExchangeError(f"No Demo symbol configuration returned for {symbol}.")
+    return {
+        "symbol": row.get("symbol"),
+        "margin_type": str(row.get("marginType") or row.get("margin_type") or "UNKNOWN").upper(),
+        "leverage": float(row.get("leverage") or 0),
+        "is_auto_add_margin": row.get("isAutoAddMargin"),
+        "max_notional_value": row.get("maxNotionalValue"),
+    }
+
+
+def change_leverage(symbol: str, leverage: int) -> dict[str, Any]:
+    if not 1 <= int(leverage) <= 125:
+        raise ValueError("leverage must be between 1 and 125")
+    return _signed_request(
+        "POST",
+        "/fapi/v1/leverage",
+        {"symbol": symbol.upper(), "leverage": int(leverage)},
+    )
+
+
+def change_margin_type(symbol: str, margin_type: str) -> dict[str, Any]:
+    margin_type = margin_type.upper()
+    if margin_type not in {"ISOLATED", "CROSSED"}:
+        raise ValueError("margin_type must be ISOLATED or CROSSED")
+    try:
+        return _signed_request(
+            "POST",
+            "/fapi/v1/marginType",
+            {"symbol": symbol.upper(), "marginType": margin_type},
+        )
+    except DemoExchangeError as exc:
+        # Binance returns "No need to change margin type" when already correct.
+        if "-4046" in str(exc):
+            return {
+                "symbol": symbol.upper(),
+                "marginType": margin_type,
+                "already_set": True,
+            }
+        raise
+
+
 def positions(symbol: str | None = None) -> list[dict[str, Any]]:
     params = {"symbol": symbol.upper()} if symbol else {}
     rows = _signed_request("GET", "/fapi/v3/positionRisk", params)
