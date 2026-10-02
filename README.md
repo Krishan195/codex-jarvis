@@ -450,3 +450,73 @@ tested.
 
 The production/live Binance Futures trading endpoint is not implemented in this
 repository.
+
+
+## Telegram-gated Demo trading
+
+New Binance Futures Demo exposure can now be gated by a private Telegram
+approval. The flow is:
+
+```text
+qualifying deterministic setup
+        |
+        v
+Telegram proposal with Approve / Reject
+        |
+        v
+authorized private user + chat only
+        |
+        v
+revalidate exact trade
+        |
+        v
+Binance Futures Demo order
+        |
+        v
+query actual fill -> protective stop/target -> notifications
+```
+
+Approval defaults to 120 seconds and is single-use. Duplicate callbacks,
+expired proposals, a changed signal, quantity/leverage/stop/target changes,
+price movement beyond the configured tolerance, pending orders, an existing
+position, or failed risk/data checks prevent submission.
+
+Store the Telegram bot token locally:
+
+```bash
+jarvis-core secret-set telegram-trading-bot-token
+```
+
+Then send `/start` to the bot and discover the private IDs:
+
+```bash
+jarvis-trader telegram-discover
+```
+
+Configure authorization:
+
+```bash
+jarvis-trader telegram-config \
+  --user-id USER_ID \
+  --chat-id CHAT_ID \
+  --expiry 120 \
+  --price-tolerance-bps 10
+```
+
+Check configuration and Demo account settings:
+
+```bash
+jarvis-trader telegram-health
+```
+
+Run the approval service:
+
+```bash
+jarvis-trader telegram-loop --scan-seconds 60
+```
+
+The bot accepts `/status`, `/pending`, `/positions`, `/pause`, and
+`/resume` only from the configured user in the configured private chat.
+
+The authenticated order client remains hard-pinned to Binance Futures Demo.
+Production/live order execution is not implemented in this repository.
