@@ -307,5 +307,80 @@ class ExecutionFlowTests(unittest.TestCase):
             )
 
 
+class ExecutionBoundaryTests(unittest.TestCase):
+    def test_new_demo_exposure_without_claimed_approval_is_blocked(self):
+        with self.assertRaisesRegex(Exception, "claimed Telegram proposal"):
+            demo_exchange.market_order(
+                "BTCUSDT",
+                "BUY",
+                1.0,
+                client_id="jv-demo-BTCUSDT-noapproval",
+                test_only=False,
+                reduce_only=False,
+            )
+
+    def test_claimed_exact_proposal_passes_execution_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "state.sqlite3"
+            store = ApprovalStore(db)
+            row = store.create(proposal_payload(), expiry_seconds=120)
+            store.decide(
+                row["proposal_id"],
+                approve=True,
+                user_id=123,
+                callback_id="cb",
+            )
+            store.claim_for_execution(row["proposal_id"])
+
+            with patch.object(demo_exchange, "DB_PATH", db), patch.object(
+                demo_exchange,
+                "server_time_ms",
+                return_value=int(time.time() * 1000),
+            ), patch.object(
+                demo_exchange,
+                "_signed_request",
+                return_value={"status": "FILLED", "orderId": 42},
+            ):
+                result = demo_exchange.market_order(
+                    "BTCUSDT",
+                    "BUY",
+                    1.0,
+                    client_id="jv-demo-BTCUSDT-approved",
+                    test_only=False,
+                    reduce_only=False,
+                    proposal_id=row["proposal_id"],
+                )
+            self.assertEqual(result["response"]["orderId"], 42)
+
+    def test_approved_quantity_cannot_be_increased(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "state.sqlite3"
+            store = ApprovalStore(db)
+            row = store.create(proposal_payload(), expiry_seconds=120)
+            store.decide(
+                row["proposal_id"],
+                approve=True,
+                user_id=123,
+                callback_id="cb",
+            )
+            store.claim_for_execution(row["proposal_id"])
+
+            with patch.object(demo_exchange, "DB_PATH", db), patch.object(
+                demo_exchange,
+                "server_time_ms",
+                return_value=int(time.time() * 1000),
+            ):
+                with self.assertRaisesRegex(Exception, "quantity differs"):
+                    demo_exchange.market_order(
+                        "BTCUSDT",
+                        "BUY",
+                        2.0,
+                        client_id="jv-demo-BTCUSDT-too-big",
+                        test_only=False,
+                        reduce_only=False,
+                        proposal_id=row["proposal_id"],
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
