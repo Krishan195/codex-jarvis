@@ -59,6 +59,7 @@ class TradingConfig:
     enabled: bool = False
     paused: bool = False
     market_type: str = "futures"
+    margin_mode: str = "ISOLATED"
     permitted_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     costs: CostConfig = field(default_factory=CostConfig)
@@ -71,6 +72,8 @@ class TradingConfig:
             raise ValueError("This build enables PAPER mode only.")
         if self.market_type not in {"spot", "futures"}:
             raise ValueError("market_type must be spot or futures")
+        if self.market_type == "futures" and self.margin_mode not in {"ISOLATED", "CROSSED"}:
+            raise ValueError("margin_mode must be ISOLATED or CROSSED for futures")
         if not self.permitted_symbols:
             raise ValueError("At least one permitted symbol is required.")
         if len(set(self.permitted_symbols)) != len(self.permitted_symbols):
@@ -100,6 +103,7 @@ def _construct(data: dict[str, Any]) -> TradingConfig:
         enabled=bool(data.get("enabled", False)),
         paused=bool(data.get("paused", False)),
         market_type=str(data.get("market_type", "futures")).lower(),
+        margin_mode=str(data.get("margin_mode", "ISOLATED")).upper(),
         permitted_symbols=[
             str(x).upper() for x in data.get("permitted_symbols", ["BTCUSDT", "ETHUSDT"])
         ],
