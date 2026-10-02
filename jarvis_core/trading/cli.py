@@ -244,6 +244,19 @@ def cmd_telegram_config(args) -> int:
     return 0
 
 
+def cmd_telegram_test_proposal(args) -> int:
+    service = DemoTelegramApprovalService()
+    row = service.create_test_and_send(
+        args.symbol.upper(),
+        args.direction.upper(),
+    )
+    print(
+        f"Sent DEMO TEST proposal {row['proposal_id']} to the authorized "
+        f"private chat. Status={row['status']}."
+    )
+    return 0
+
+
 def cmd_telegram_propose(args) -> int:
     service = DemoTelegramApprovalService()
     row = service.create_and_send(args.symbol.upper())
@@ -413,6 +426,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--price-tolerance-bps", type=float, default=10.0)
     s.add_argument("--poll-timeout", type=int, default=25)
     s.set_defaults(func=cmd_telegram_config)
+
+    s = sub.add_parser("telegram-test-proposal")
+    s.add_argument("symbol")
+    s.add_argument(
+        "--direction",
+        choices=["LONG", "SHORT", "long", "short"],
+        default="LONG",
+    )
+    s.set_defaults(func=cmd_telegram_test_proposal)
 
     s = sub.add_parser("telegram-propose")
     s.add_argument("symbol")
