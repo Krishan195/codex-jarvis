@@ -90,7 +90,12 @@ class TradingEngine:
             state_certain=True,
         )
 
-    def proposal(self, symbol: str) -> TradeProposal:
+    def proposal(
+        self,
+        symbol: str,
+        *,
+        account_state_override: AccountState | None = None,
+    ) -> TradeProposal:
         symbol = symbol.upper()
         if symbol not in self.cfg.permitted_symbols:
             raise ValueError(f"{symbol} is not in permitted_symbols.")
@@ -141,7 +146,7 @@ class TradingEngine:
             proposal = apply_risk(
                 proposal,
                 self.cfg,
-                self.account_state(),
+                account_state_override or self.account_state(),
                 step_size=rules["step_size"],
                 tick_size=rules["tick_size"],
                 min_qty=rules["min_qty"],
