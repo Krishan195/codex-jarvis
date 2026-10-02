@@ -11,6 +11,11 @@ from .config import CONFIG_PATH, initialize_paper_config, load_config
 from .engine import TradingEngine
 from .journal import TradingJournal
 from . import demo_exchange
+from .telegram_approval import (
+    DemoTelegramApprovalService,
+    TelegramApprovalConfig,
+    write_telegram_config,
+)
 
 
 def _json(value) -> None:
@@ -166,17 +171,11 @@ def cmd_demo_order_test(args) -> int:
 
 
 def cmd_demo_market(args) -> int:
-    _json(
-        demo_exchange.market_order(
-            args.symbol,
-            args.side,
-            args.quantity,
-            client_id=args.client_id,
-            reduce_only=args.reduce_only,
-            test_only=False,
-        )
+    raise RuntimeError(
+        "Direct Demo entry submission is disabled. New exposure must pass "
+        "the Telegram approval service. Use demo-order-test only for non-trading "
+        "API validation, or telegram-propose/telegram-loop for approved Demo trades."
     )
-    return 0
 
 
 def cmd_demo_order(args) -> int:
@@ -191,6 +190,68 @@ def cmd_demo_cancel(args) -> int:
 
 def cmd_demo_close(args) -> int:
     _json(demo_exchange.close_symbol_position(args.symbol))
+    return 0
+
+
+def cmd_telegram_config(args) -> int:
+    cfg = TelegramApprovalConfig(
+        user_id=args.user_id,
+        chat_id=args.chat_id,
+        approval_expiry_seconds=args.expiry,
+        price_tolerance_bps=args.price_tolerance_bps,
+        poll_timeout_seconds=args.poll_timeout,
+    )
+    path = write_telegram_config(cfg)
+    print(f"Saved Telegram trading approval config: {path}")
+    print("Bot token remains separate in Linux Secret Service.")
+    return 0
+
+
+def cmd_telegram_propose(args) -> int:
+    service = DemoTelegramApprovalService()
+    row = service.create_and_send(args.symbol.upper())
+    if row is None:
+        print("No qualifying DEMO trade proposal was generated.")
+    else:
+        print(
+            f"Sent DEMO proposal {row['proposal_id']} to the authorized private chat. "
+            f"Status={row['status']}."
+        )
+    return 0
+
+
+def cmd_telegram_poll(_args) -> int:
+    service = DemoTelegramApprovalService()
+    count = service.poll_once()
+    print(f"Processed {count} Telegram update(s).")
+    return 0
+
+
+def cmd_telegram_loop(args) -> int:
+    service = DemoTelegramApprovalService()
+    scan_every = max(15, int(args.scan_seconds))
+    next_scan = 0.0
+    print(
+        "DEMO Telegram approval loop running. New entries require an authorized "
+        "Approve button. Ctrl+C to stop."
+    )
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= next_scan:
+                created = service.propose_scan()
+                if created:
+                    print("Sent proposal(s): " + ", ".join(created))
+                next_scan = now + scan_every
+            service.poll_once()
+    except KeyboardInterrupt:
+        print("DEMO Telegram approval loop stopped.")
+    return 0
+
+
+def cmd_telegram_pending(_args) -> int:
+    service = DemoTelegramApprovalService()
+    _json(service.store.pending())
     return 0
 
 
@@ -277,6 +338,28 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("demo-close")
     s.add_argument("symbol")
     s.set_defaults(func=cmd_demo_close)
+
+    s = sub.add_parser("telegram-config")
+    s.add_argument("--user-id", type=int, required=True)
+    s.add_argument("--chat-id", type=int, required=True)
+    s.add_argument("--expiry", type=int, default=120)
+    s.add_argument("--price-tolerance-bps", type=float, default=10.0)
+    s.add_argument("--poll-timeout", type=int, default=25)
+    s.set_defaults(func=cmd_telegram_config)
+
+    s = sub.add_parser("telegram-propose")
+    s.add_argument("symbol")
+    s.set_defaults(func=cmd_telegram_propose)
+
+    s = sub.add_parser("telegram-poll")
+    s.set_defaults(func=cmd_telegram_poll)
+
+    s = sub.add_parser("telegram-loop")
+    s.add_argument("--scan-seconds", type=int, default=60)
+    s.set_defaults(func=cmd_telegram_loop)
+
+    s = sub.add_parser("telegram-pending")
+    s.set_defaults(func=cmd_telegram_pending)
 
     return p
 
