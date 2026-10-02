@@ -19,6 +19,10 @@ class StrategyConfig:
     ema_fast: int = 20
     ema_slow: int = 50
     rsi_period: int = 14
+    long_rsi_min: float = 52.0
+    long_rsi_max: float = 68.0
+    short_rsi_min: float = 32.0
+    short_rsi_max: float = 48.0
     atr_period: int = 14
     min_atr_percent: float = 0.25
     max_atr_percent: float = 2.50
@@ -27,6 +31,7 @@ class StrategyConfig:
     max_adverse_book_imbalance: float = 0.25
     stop_atr_buffer: float = 0.50
     reward_risk: float = 2.0
+    signal_expiry_minutes: int = 15
 
 
 @dataclass
