@@ -759,6 +759,7 @@ class DemoTelegramApprovalService:
                 client_id=client_id,
                 reduce_only=False,
                 test_only=False,
+                proposal_id=proposal_id,
             )
         except Exception as exc:
             # demo_exchange already tries query-by-client-id reconciliation on
