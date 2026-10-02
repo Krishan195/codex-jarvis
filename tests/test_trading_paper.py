@@ -7,8 +7,10 @@ import unittest
 from jarvis_core.trading.config import TradingConfig, RiskConfig
 from jarvis_core.trading.journal import TradingJournal
 from jarvis_core.trading.market_data import MarketDataError, validate_completed_candles
-from jarvis_core.trading.models import Candle, TradeProposal
+from jarvis_core.trading.models import BookSnapshot, Candle, FuturesContext, TradeProposal
+from jarvis_core.trading.paper import PaperBroker
 from jarvis_core.trading.risk import AccountState, apply_risk
+from jarvis_core.trading.strategy import generate_proposal
 
 
 def candle(open_time: int, close: float = 100.0) -> Candle:
@@ -158,6 +160,80 @@ class JournalTests(unittest.TestCase):
             second.event("RESTART_RECOVERY_TEST", {"ok": True})
             events = second.recent_events()
             self.assertEqual(events[0]["event_type"], "RESTART_RECOVERY_TEST")
+
+
+class StrategyTests(unittest.TestCase):
+    def test_wait_is_valid_when_gates_do_not_qualify(self):
+        step15 = 900_000
+        signal = [candle(i * step15, 100 + i * 0.1) for i in range(120)]
+
+        def series(step, count=120):
+            return [candle(i * step, 100 + i * 0.1) for i in range(count)]
+
+        cfg = TradingConfig(
+            enabled=True,
+            risk=RiskConfig(allocated_capital_quote=10_000),
+        ).strategy
+        p = generate_proposal(
+            symbol="BTCUSDT",
+            market_type="futures",
+            signal_candles=signal,
+            context_1h=series(3_600_000),
+            context_4h=series(14_400_000),
+            book=BookSnapshot(
+                best_bid=111.89,
+                best_ask=111.91,
+                spread_bps=1.8,
+                bid_notional=1_000_000,
+                ask_notional=900_000,
+                imbalance=0.05,
+                observed_at_ms=signal[-1].close_time + 1,
+            ),
+            futures=FuturesContext(last_funding_rate=0.0001, open_interest=1000),
+            server_time_ms=signal[-1].close_time + 1,
+            cfg=cfg,
+            leverage=2,
+        )
+        self.assertEqual(p.decision, "WAIT")
+        self.assertTrue(p.failure_reasons)
+
+
+class ProtectionFailureTests(unittest.TestCase):
+    def test_failed_protection_check_is_audited(self):
+        class BrokenMarket:
+            def klines(self, *args, **kwargs):
+                raise RuntimeError("market feed unavailable")
+
+        with tempfile.TemporaryDirectory() as td:
+            journal = TradingJournal(Path(td) / "journal.sqlite3")
+            cfg = TradingConfig(
+                enabled=True,
+                risk=RiskConfig(allocated_capital_quote=10_000),
+            )
+            cfg.validate()
+            journal.insert_position(
+                {
+                    "client_id": "paper-test-1",
+                    "symbol": "BTCUSDT",
+                    "market_type": "futures",
+                    "strategy_version": "trend-pullback-v1",
+                    "direction": "LONG",
+                    "quantity": 0.1,
+                    "leverage": 2,
+                    "entry": 100,
+                    "stop_loss": 98,
+                    "take_profit": 104,
+                    "opened_at": "2026-01-01T00:00:00+00:00",
+                    "entry_fees": 0.01,
+                }
+            )
+            broker = PaperBroker(cfg, journal, BrokenMarket())
+            outcome = broker.manage()
+            self.assertEqual(outcome[0]["status"], "PROTECTION_CHECK_FAILED")
+            self.assertEqual(
+                journal.recent_events()[0]["event_type"],
+                "PAPER_PROTECTION_CHECK_FAILED",
+            )
 
 
 if __name__ == "__main__":
