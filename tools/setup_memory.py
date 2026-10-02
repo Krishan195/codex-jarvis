@@ -195,41 +195,6 @@ proposal drafts. Keep it factual and update it when experience changes.
   pretending.
 """)
 
-create(vault / "02 - Projects" / "Binance Trading Lab.md", """---
-status: active
-project: binance-trading-lab
-type: reference
----
-# Binance Trading Lab
-
-## Purpose
-
-Use Jarvis as a Binance-specialist market analyst with current public market
-data and a local simulation journal.
-
-## Analysis framework
-
-For each setup, prefer evidence from:
-- multi-timeframe trend and structure
-- EMA 20/50 and longer-term reference
-- RSI and MACD momentum
-- ATR volatility and Bollinger context
-- VWAP and volume participation
-- taker buy flow
-- spread and order-book imbalance
-- nearby support and resistance
-- for USD-M futures: mark price, funding, and open interest when available
-
-## Working rules
-
-- Use current Binance market data rather than remembered prices.
-- Keep observed facts separate from interpretation.
-- Record useful simulated setups and outcomes so recurring mistakes/patterns can
-  be reviewed later.
-- Never store API keys, secrets, recovery data, or private account credentials
-  in this note.
-""")
-
 create(vault / "02 - Projects" / "Freelance Business.md", """---
 status: active
 project: freelance-agent

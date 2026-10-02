@@ -25,11 +25,6 @@ BLOCKS = [
         "<!-- CODEX-JARVIS-FREELANCE-END -->",
         "Jarvis freelance agent",
     ),
-    (
-        "<!-- CODEX-JARVIS-BINANCE-START -->",
-        "<!-- CODEX-JARVIS-BINANCE-END -->",
-        "Jarvis Binance specialist",
-    ),
 ]
 
 if len(sys.argv) != 3:
