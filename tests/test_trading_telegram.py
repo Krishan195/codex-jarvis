@@ -193,7 +193,7 @@ class RevalidationTests(unittest.TestCase):
                 market = Market()
 
                 @staticmethod
-                def proposal(symbol, account_state_override=None):
+                def proposal(symbol, account_state_override=None, require_enabled=True):
                     p = proposal_payload()
                     return TradeProposal(
                         decision=p["decision"],
