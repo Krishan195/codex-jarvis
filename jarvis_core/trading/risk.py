@@ -24,12 +24,19 @@ def _round_down(value: float, step: float) -> float:
     return math.floor((value + 1e-12) / step) * step
 
 
+def _round_nearest(value: float, step: float) -> float:
+    if step <= 0:
+        return value
+    return round(value / step) * step
+
+
 def apply_risk(
     proposal: TradeProposal,
     cfg: TradingConfig,
     state: AccountState,
     *,
     step_size: float,
+    tick_size: float,
     min_qty: float,
     max_qty: float,
     min_notional: float,
@@ -66,6 +73,13 @@ def apply_risk(
 
     entry = float(proposal.entry_reference or 0)
     stop = float(proposal.stop_loss or 0)
+    if tick_size > 0:
+        stop = _round_nearest(stop, tick_size)
+        proposal.stop_loss = stop
+        if proposal.take_profit is not None:
+            proposal.take_profit = _round_nearest(
+                float(proposal.take_profit), tick_size
+            )
     if entry <= 0 or stop <= 0 or entry == stop:
         errors.append("invalid entry/stop geometry")
 
@@ -118,6 +132,12 @@ def apply_risk(
     proposal.estimated_entry_fee = quantity * entry_fee_unit
     proposal.estimated_exit_fee = quantity * exit_fee_unit
     proposal.estimated_slippage = quantity * slippage_unit
+    # Entry reference is already the executable side of the book (ask for a
+    # long, bid for a short). Report half-spread versus midpoint separately;
+    # it is not double-counted in the stop-distance calculation.
+    proposal.estimated_spread_cost = (
+        quantity * entry * (proposal.spread_bps / 20_000.0)
+    )
     proposal.estimated_funding = quantity * funding_unit
     proposal.estimated_loss_at_stop = quantity * unit_loss
     return proposal
