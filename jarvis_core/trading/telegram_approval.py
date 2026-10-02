@@ -610,8 +610,7 @@ class DemoTelegramApprovalService:
     def health(self) -> dict[str, Any]:
         symbols: dict[str, Any] = {}
         for symbol in self.trading_cfg.permitted_symbols:
-            rows = demo_exchange.positions(symbol)
-            row = rows[0] if rows else {}
+            row = demo_exchange.symbol_config(symbol)
             actual_margin = str(row.get("margin_type") or "UNKNOWN").upper()
             actual_leverage = float(row.get("leverage") or 0)
             symbols[symbol] = {
@@ -687,12 +686,9 @@ class DemoTelegramApprovalService:
             peak_equity=peak_equity,
             state_certain=not unapproved_pending_entries,
         )
-        margin_mode = "UNKNOWN"
-        actual_leverage = 0.0
-        symbol_rows = demo_exchange.positions(symbol)
-        if symbol_rows:
-            margin_mode = str(symbol_rows[0].get("margin_type") or "unknown").upper()
-            actual_leverage = float(symbol_rows[0].get("leverage") or 0)
+        symbol_cfg = demo_exchange.symbol_config(symbol)
+        margin_mode = str(symbol_cfg.get("margin_type") or "UNKNOWN").upper()
+        actual_leverage = float(symbol_cfg.get("leverage") or 0)
         if available <= 0:
             state.state_certain = False
         return state, exposure, margin_mode, actual_leverage
