@@ -95,6 +95,7 @@ class TradingEngine:
         symbol: str,
         *,
         account_state_override: AccountState | None = None,
+        require_enabled: bool = True,
     ) -> TradeProposal:
         symbol = symbol.upper()
         if symbol not in self.cfg.permitted_symbols:
@@ -153,6 +154,7 @@ class TradingEngine:
                 max_qty=rules["max_qty"],
                 min_notional=rules["min_notional"],
                 funding_rate=futures.last_funding_rate,
+                require_enabled=require_enabled,
             )
         return proposal
 
