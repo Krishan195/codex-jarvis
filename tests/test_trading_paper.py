@@ -11,6 +11,7 @@ from jarvis_core.trading.models import BookSnapshot, Candle, FuturesContext, Tra
 from jarvis_core.trading.paper import PaperBroker
 from jarvis_core.trading.risk import AccountState, apply_risk
 from jarvis_core.trading.strategy import generate_proposal
+from jarvis_core.trading import demo_exchange
 
 
 def candle(open_time: int, close: float = 100.0) -> Candle:
@@ -234,6 +235,34 @@ class ProtectionFailureTests(unittest.TestCase):
                 journal.recent_events()[0]["event_type"],
                 "PAPER_PROTECTION_CHECK_FAILED",
             )
+
+
+class DemoExchangeTests(unittest.TestCase):
+    def test_demo_client_is_hard_pinned_away_from_live(self):
+        self.assertEqual(
+            demo_exchange.DEMO_BASE_URL,
+            "https://demo-fapi.binance.com",
+        )
+        self.assertNotEqual(
+            demo_exchange.DEMO_BASE_URL,
+            "https://fapi.binance.com",
+        )
+
+    def test_hmac_signature_is_deterministic(self):
+        params = {
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "timestamp": 1234567890,
+        }
+        first = demo_exchange._sign(params, "secret")
+        second = demo_exchange._sign(params, "secret")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 64)
+
+    def test_client_order_id_is_demo_scoped(self):
+        cid = demo_exchange.make_client_id("BTCUSDT", "abc123")
+        self.assertTrue(cid.startswith("jv-demo-BTCUSDT-"))
+        self.assertLessEqual(len(cid), 36)
 
 
 if __name__ == "__main__":
