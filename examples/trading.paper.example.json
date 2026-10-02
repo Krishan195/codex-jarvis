@@ -4,6 +4,7 @@
   "enabled": false,
   "paused": false,
   "market_type": "futures",
+  "margin_mode": "ISOLATED",
   "permitted_symbols": ["BTCUSDT", "ETHUSDT"],
   "strategy": {
     "version": "trend-pullback-v1",
