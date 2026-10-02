@@ -315,3 +315,208 @@ human-readable dashboard is written to:
 ```text
 Memory/05 - Resources/Jobs/Freelance Opportunities.md
 ```
+
+
+## Binance market-analysis specialist
+
+`jarvis-binance` is a lightweight, on-demand Binance market-analysis module.
+It does not change the normal Luna voice model or add background workers, so
+ordinary Jarvis response latency stays as it was.
+
+It uses current public Binance market data and calculates trend/momentum,
+EMA 20/50, RSI, MACD, ATR, Bollinger Bands, VWAP, volume participation, taker
+buy flow, spread, order-book imbalance, support/resistance, and 24-hour market
+context. USD-M futures analysis also attempts to include mark price, funding,
+and open interest.
+
+Install/update only this feature without rerunning the full Jarvis installer:
+
+```bash
+cd ~/my-agent/codex-jarvis
+git pull
+bash tools/install_binance_expert.sh
+```
+
+Examples:
+
+```bash
+jarvis-binance quote BTCUSDT --market spot
+jarvis-binance analyze BTCUSDT --market futures --interval 15m
+jarvis-binance multi BTCUSDT --market futures --intervals 15m,1h,4h
+```
+
+A local simulation ledger is also available:
+
+```bash
+jarvis-binance paper-open BTCUSDT --market futures --side long --quantity 0.001 --leverage 5
+jarvis-binance positions
+jarvis-binance paper-close 1
+jarvis-binance stats
+```
+
+The built-in module contains no live-account order execution and stores no
+Binance API secret. Paper history is kept locally under Jarvis application
+data.
+
+
+## Deterministic Binance PAPER trading engine
+
+For structured trading-system work, use `jarvis-trader`. It is separate from
+the voice loop, so the normal Luna/low Jarvis path stays fast.
+
+Current phase implements:
+
+- Binance public market-data validation
+- BTCUSDT / ETHUSDT defaults
+- completed 15m signals with 1h / 4h context
+- versioned `trend-pullback-v1` rules
+- deterministic cost-aware position sizing and portfolio limits
+- persistent SQLite signals, positions and audit events
+- duplicate-signal protection and restart recovery
+- autonomous PAPER cycles / loop
+- pause, resume, status, performance and managed-close commands
+
+Install only this module:
+
+```bash
+cd ~/my-agent/codex-jarvis
+git pull
+bash tools/install_trading_agent.sh
+```
+
+Initialize an explicit paper account:
+
+```bash
+jarvis-trader init --capital 10000 --market futures
+jarvis-trader health
+jarvis-trader scan
+```
+
+Initialization does **not** enable new entries. Review
+`~/.config/codex-jarvis/trading.json`, then explicitly enable PAPER entries:
+
+```bash
+jarvis-trader enable-paper
+jarvis-trader paper-cycle
+```
+
+A dedicated paper process can run independently:
+
+```bash
+jarvis-trader paper-loop --seconds 60
+```
+
+Nothing starts that loop automatically.
+
+See [docs/TRADING_AGENT.md](docs/TRADING_AGENT.md) for exact strategy math,
+risk rules, paper-fill assumptions, tests and current limitations.
+
+
+### Binance Futures Demo Trading
+
+For exchange-side testing with virtual funds, `jarvis-trader` also includes
+an authenticated Binance USD-M Futures Demo client. The module is hard-pinned
+to the Demo host and contains no production Futures trading base URL.
+
+Create Demo Trading API credentials in Binance, then store them locally using
+hidden prompts:
+
+```bash
+jarvis-core secret-set binance-demo-api-key
+jarvis-core secret-set binance-demo-api-secret
+```
+
+Do not paste those values into chat, Memory, config files, or Git.
+
+Verify authentication:
+
+```bash
+jarvis-trader demo-health
+jarvis-trader demo-balance
+jarvis-trader demo-positions
+```
+
+Validate the signed order path without creating a Demo order:
+
+```bash
+jarvis-trader demo-order-test BTCUSDT BUY 0.001
+```
+
+The Demo client also supports explicit virtual market orders, order lookup,
+cancel, and managed close commands. These operate only against Binance Demo
+Trading. Autonomous Demo strategy execution is intentionally not enabled until
+exchange-side protective-order handling and reconciliation are completed and
+tested.
+
+The production/live Binance Futures trading endpoint is not implemented in this
+repository.
+
+
+## Telegram-gated Demo trading
+
+New Binance Futures Demo exposure can now be gated by a private Telegram
+approval. The flow is:
+
+```text
+qualifying deterministic setup
+        |
+        v
+Telegram proposal with Approve / Reject
+        |
+        v
+authorized private user + chat only
+        |
+        v
+revalidate exact trade
+        |
+        v
+Binance Futures Demo order
+        |
+        v
+query actual fill -> protective stop/target -> notifications
+```
+
+Approval defaults to 120 seconds and is single-use. Duplicate callbacks,
+expired proposals, a changed signal, quantity/leverage/stop/target changes,
+price movement beyond the configured tolerance, pending orders, an existing
+position, or failed risk/data checks prevent submission.
+
+Store the Telegram bot token locally:
+
+```bash
+jarvis-core secret-set telegram-trading-bot-token
+```
+
+Then send `/start` to the bot and discover the private IDs:
+
+```bash
+jarvis-trader telegram-discover
+```
+
+Configure authorization:
+
+```bash
+jarvis-trader telegram-config \
+  --user-id USER_ID \
+  --chat-id CHAT_ID \
+  --expiry 120 \
+  --price-tolerance-bps 10
+```
+
+Check configuration and Demo account settings:
+
+```bash
+jarvis-trader telegram-health
+```
+
+Run the approval service:
+
+```bash
+jarvis-trader telegram-loop --scan-seconds 60
+```
+
+The bot accepts `/status`, `/pending`, `/positions`, `/pause`, and
+`/resume` only from the configured user in the configured private chat.
+
+The authenticated order client remains hard-pinned to Binance Futures Demo.
+Production/live order execution is not implemented in this repository.
