@@ -410,3 +410,43 @@ Nothing starts that loop automatically.
 
 See [docs/TRADING_AGENT.md](docs/TRADING_AGENT.md) for exact strategy math,
 risk rules, paper-fill assumptions, tests and current limitations.
+
+
+### Binance Futures Demo Trading
+
+For exchange-side testing with virtual funds, `jarvis-trader` also includes
+an authenticated Binance USD-M Futures Demo client. The module is hard-pinned
+to the Demo host and contains no production Futures trading base URL.
+
+Create Demo Trading API credentials in Binance, then store them locally using
+hidden prompts:
+
+```bash
+jarvis-core secret-set binance-demo-api-key
+jarvis-core secret-set binance-demo-api-secret
+```
+
+Do not paste those values into chat, Memory, config files, or Git.
+
+Verify authentication:
+
+```bash
+jarvis-trader demo-health
+jarvis-trader demo-balance
+jarvis-trader demo-positions
+```
+
+Validate the signed order path without creating a Demo order:
+
+```bash
+jarvis-trader demo-order-test BTCUSDT BUY 0.001
+```
+
+The Demo client also supports explicit virtual market orders, order lookup,
+cancel, and managed close commands. These operate only against Binance Demo
+Trading. Autonomous Demo strategy execution is intentionally not enabled until
+exchange-side protective-order handling and reconciliation are completed and
+tested.
+
+The production/live Binance Futures trading endpoint is not implemented in this
+repository.
