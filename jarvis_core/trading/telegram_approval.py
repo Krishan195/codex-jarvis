@@ -787,9 +787,16 @@ class DemoTelegramApprovalService:
         executed_qty = float(actual.get("executedQty") or 0)
         avg_price = float(actual.get("avgPrice") or 0)
         if executed_qty > 0:
+            original_qty = float(actual.get("origQty") or p["quantity"])
+            fill_label = (
+                "PARTIAL FILL"
+                if executed_qty + 1e-12 < original_qty
+                else "FULL FILL"
+            )
             self.bot.send(
-                f"DEMO — {status}: {p['symbol']} actual quantity "
-                f"{executed_qty}, average price {_fmt_price(avg_price)}."
+                f"DEMO — {fill_label}: {p['symbol']} actual quantity "
+                f"{executed_qty}, average price {_fmt_price(avg_price)}. "
+                f"Final order status: {status}."
             )
         else:
             self.bot.send(
@@ -840,11 +847,44 @@ class DemoTelegramApprovalService:
                     f"DEMO — PROTECTION FAILURE for {p['symbol']}: {exc}. "
                     "Emergency policy: submit a reduce-only market close now."
                 )
-                emergency = demo_exchange.close_symbol_position(p["symbol"])
-                protection = {
-                    "protection_error": str(exc),
-                    "emergency_close": emergency,
-                }
+                try:
+                    emergency = demo_exchange.close_symbol_position(p["symbol"])
+                    protection = {
+                        "protection_error": str(exc),
+                        "emergency_close": emergency,
+                    }
+                    self.bot.send(
+                        f"DEMO — Emergency reduce-only close submitted for "
+                        f"{p['symbol']} after protection failure."
+                    )
+                except Exception as emergency_exc:
+                    protection = {
+                        "protection_error": str(exc),
+                        "emergency_close_error": str(emergency_exc),
+                    }
+                    self.store.mark(
+                        proposal_id,
+                        "PROTECTION_EMERGENCY_FAILED",
+                        reason=(
+                            f"protection={exc}; emergency_close={emergency_exc}"
+                        ),
+                        result={
+                            "entry": actual,
+                            "protection": protection,
+                            "revalidation": check,
+                        },
+                        order_id=order_id,
+                        client_id=client_id,
+                    )
+                    self.bot.send(
+                        f"DEMO — CRITICAL: emergency close also failed for "
+                        f"{p['symbol']}. Manual Demo-account intervention is required."
+                    )
+                    return {
+                        "entry": actual,
+                        "protection": protection,
+                        "revalidation": check,
+                    }
 
         final = {
             "entry": actual,
