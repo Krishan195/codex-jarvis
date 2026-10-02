@@ -14,8 +14,9 @@ from jarvis_core.trading.telegram_approval import (
     TelegramTransientError,
 )
 from jarvis_core.trading.config import TradingConfig, RiskConfig
-from jarvis_core.trading.models import BookSnapshot, TradeProposal
+from jarvis_core.trading.models import BookSnapshot, Candle, FuturesContext, TradeProposal
 from jarvis_core.trading import demo_exchange
+from jarvis_core.trading.risk import AccountState
 
 
 def proposal_payload() -> dict:
@@ -452,6 +453,107 @@ class TelegramPollingTests(unittest.TestCase):
             count = service.poll_once()
             self.assertEqual(count, 0)
             self.assertEqual(store.get_offset(), before)
+
+
+class ManualDemoTestProposalTests(unittest.TestCase):
+    def test_manual_demo_test_bypasses_strategy_but_keeps_risk_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ApprovalStore(Path(td) / "state.sqlite3")
+            service = service_with_store(store)
+
+            class FakeMarket:
+                @staticmethod
+                def depth(symbol, limit=20):
+                    return BookSnapshot(
+                        best_bid=99.9,
+                        best_ask=100.0,
+                        spread_bps=10.005,
+                        bid_notional=100000,
+                        ask_notional=100000,
+                        imbalance=0.0,
+                        observed_at_ms=int(time.time() * 1000),
+                    )
+
+                @staticmethod
+                def klines(symbol, interval, limit=120):
+                    rows = []
+                    start = 1_000_000
+                    for i in range(120):
+                        close = 100.0 + (i % 3) * 0.1
+                        rows.append(
+                            Candle(
+                                open_time=start + i * 900_000,
+                                open=close,
+                                high=close + 1.0,
+                                low=close - 1.0,
+                                close=close,
+                                volume=100.0,
+                                close_time=start + i * 900_000 + 899_999,
+                                quote_volume=10_000.0,
+                                trades=100,
+                                taker_buy_base=50.0,
+                                taker_buy_quote=5_000.0,
+                            )
+                        )
+                    return rows
+
+                @staticmethod
+                def futures_context(symbol):
+                    return FuturesContext(last_funding_rate=0.0001)
+
+                @staticmethod
+                def symbol_rules(symbol):
+                    return {
+                        "step_size": 0.001,
+                        "tick_size": 0.1,
+                        "min_qty": 0.001,
+                        "max_qty": 1000.0,
+                        "min_notional": 5.0,
+                    }
+
+            class FakeEngine:
+                market = FakeMarket()
+
+            service.engine = FakeEngine()
+            service._demo_state = lambda symbol: (
+                AccountState(
+                    open_positions=0,
+                    aggregate_notional=0.0,
+                    realized_pnl_today=0.0,
+                    unrealized_pnl=0.0,
+                    current_equity=10_000.0,
+                    peak_equity=10_000.0,
+                    state_certain=True,
+                ),
+                0.0,
+                "ISOLATED",
+                2.0,
+            )
+
+            with patch(
+                "jarvis_core.trading.telegram_approval.demo_exchange.open_orders",
+                return_value=[],
+            ), patch(
+                "jarvis_core.trading.telegram_approval.demo_exchange.positions",
+                return_value=[],
+            ), patch(
+                "jarvis_core.trading.telegram_approval.demo_exchange.server_time_ms",
+                return_value=int(time.time() * 1000),
+            ):
+                row = service.create_test_and_send("BTCUSDT", "LONG")
+
+            self.assertEqual(row["status"], "PENDING")
+            self.assertTrue(row["payload"]["test_proposal"])
+            self.assertEqual(
+                row["payload"]["strategy_version"],
+                "manual-demo-test-v1",
+            )
+            self.assertGreater(row["payload"]["quantity"], 0)
+            self.assertTrue(
+                service.bot.sent[0][0].startswith(
+                    "DEMO TEST — TRADE APPROVAL REQUIRED"
+                )
+            )
 
 
 if __name__ == "__main__":
