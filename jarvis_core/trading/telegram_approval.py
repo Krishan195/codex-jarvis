@@ -27,7 +27,9 @@ from jarvis_core import secrets
 from .config import CONFIG_PATH, TradingConfig, load_config, write_config
 from .engine import TradingEngine
 from .journal import DB_PATH, TradingJournal
-from .risk import AccountState
+from .risk import AccountState, apply_risk
+from .models import TradeProposal
+from .indicators import atr_wilder
 from . import demo_exchange
 
 TELEGRAM_TOKEN_SECRET = "telegram-trading-bot-token"
@@ -574,8 +576,14 @@ def _proposal_message(
     ).astimezone().isoformat(timespec="seconds")
     brief = "; ".join(p.get("evidence", [])[:4])
 
+    label = (
+        "DEMO TEST — TRADE APPROVAL REQUIRED"
+        if p.get("test_proposal")
+        else "DEMO — TRADE APPROVAL REQUIRED"
+    )
+
     return (
-        "DEMO — TRADE APPROVAL REQUIRED\n\n"
+        f"{label}\n\n"
         f"Proposal: {row['proposal_id']}\n"
         f"Expires: {expires}\n"
         f"{p['symbol']} {p['market_type'].upper()} {p['direction']}\n"
@@ -717,23 +725,16 @@ class DemoTelegramApprovalService:
             state.state_certain = False
         return state, exposure, margin_mode, actual_leverage
 
-    def create_and_send(self, symbol: str) -> dict[str, Any] | None:
-        if self.trading_cfg.paused:
-            return None
-        demo_state, exposure, margin_mode, actual_leverage = self._demo_state(symbol)
-        if margin_mode != self.trading_cfg.margin_mode:
-            return None
-        if actual_leverage != float(self.trading_cfg.risk.max_leverage):
-            return None
-        proposal = self.engine.proposal(
-            symbol,
-            account_state_override=demo_state,
-            require_enabled=False,
+    def _store_and_send(
+        self,
+        payload: dict[str, Any],
+        *,
+        exposure: float,
+        margin_mode: str,
+    ) -> dict[str, Any] | None:
+        payload["approval_price_tolerance_bps"] = (
+            self.telegram_cfg.price_tolerance_bps
         )
-        if proposal.decision != "TRADE":
-            return None
-        payload = proposal.as_dict()
-        payload["approval_price_tolerance_bps"] = self.telegram_cfg.price_tolerance_bps
         payload["margin_mode"] = margin_mode
         row = self.store.create(
             payload,
@@ -750,8 +751,160 @@ class DemoTelegramApprovalService:
             ),
             keyboard=_keyboard(row["proposal_id"]),
         )
-        self.store.set_message_id(row["proposal_id"], int(msg["message_id"]))
+        self.store.set_message_id(
+            row["proposal_id"],
+            int(msg["message_id"]),
+        )
         return self.store.get(row["proposal_id"])
+
+    def create_test_and_send(
+        self,
+        symbol: str,
+        direction: str,
+    ) -> dict[str, Any]:
+        """Create one explicit DEMO test proposal without strategy qualification.
+
+        This exists only to exercise the approval/execution/protection path on
+        virtual funds. Portfolio risk, exchange filters, leverage/margin checks,
+        approval expiry and exact revalidation still apply.
+        """
+        if self.trading_cfg.paused:
+            raise RuntimeError("New proposals are paused.")
+
+        symbol = symbol.upper()
+        direction = direction.upper()
+        if symbol not in self.trading_cfg.permitted_symbols:
+            raise RuntimeError(f"{symbol} is not permitted by trading config.")
+        if direction not in {"LONG", "SHORT"}:
+            raise ValueError("direction must be LONG or SHORT")
+
+        demo_state, exposure, margin_mode, actual_leverage = (
+            self._demo_state(symbol)
+        )
+        if margin_mode != self.trading_cfg.margin_mode:
+            raise RuntimeError(
+                f"Demo margin mode is {margin_mode}, expected "
+                f"{self.trading_cfg.margin_mode}."
+            )
+        if actual_leverage != float(self.trading_cfg.risk.max_leverage):
+            raise RuntimeError(
+                f"Demo leverage is {actual_leverage}x, expected "
+                f"{self.trading_cfg.risk.max_leverage}x."
+            )
+        if demo_exchange.open_orders(symbol):
+            raise RuntimeError("Pending Demo orders already exist for symbol.")
+        if any(
+            abs(float(x["position_amt"])) > 0
+            for x in demo_exchange.positions(symbol)
+        ):
+            raise RuntimeError("A Demo position already exists for symbol.")
+
+        book = self.engine.market.depth(symbol, limit=20)
+        candles = self.engine.market.klines(symbol, "15m", limit=120)
+        atr = atr_wilder(
+            candles,
+            self.trading_cfg.strategy.atr_period,
+        )[-1]
+        if not atr or atr <= 0:
+            raise RuntimeError("Could not calculate a valid ATR for test trade.")
+
+        entry = book.best_ask if direction == "LONG" else book.best_bid
+        if direction == "LONG":
+            stop = entry - atr
+            target = entry + (2.0 * atr)
+        else:
+            stop = entry + atr
+            target = entry - (2.0 * atr)
+
+        now = demo_exchange.server_time_ms()
+        futures = self.engine.market.futures_context(symbol)
+        proposal = TradeProposal(
+            decision="TRADE",
+            symbol=symbol,
+            market_type=self.trading_cfg.market_type,
+            direction=direction,
+            strategy_version="manual-demo-test-v1",
+            signal_timestamp=now,
+            expires_at=(
+                now
+                + self.telegram_cfg.approval_expiry_seconds * 1000
+            ),
+            order_type="MARKET",
+            market_regime="manual-test",
+            entry_conditions=[
+                "Manual DEMO test requested; strategy qualification bypassed",
+                "Deterministic risk and exchange checks remain mandatory",
+            ],
+            entry_reference=entry,
+            stop_loss=stop,
+            take_profit=target,
+            leverage=float(self.trading_cfg.risk.max_leverage),
+            spread_bps=book.spread_bps,
+            evidence=[
+                "Manual DEMO workflow test",
+                f"15m ATR={atr:.8f}",
+                f"spread={book.spread_bps:.4f} bps",
+            ],
+            failure_reasons=[],
+            data_health={
+                "healthy": True,
+                "reference_candle_close_time": candles[-1].close_time,
+                "book_observed_at": book.observed_at_ms,
+                "server_time_ms": now,
+            },
+        )
+        rules = self.engine.market.symbol_rules(symbol)
+        proposal = apply_risk(
+            proposal,
+            self.trading_cfg,
+            demo_state,
+            step_size=rules["step_size"],
+            tick_size=rules["tick_size"],
+            min_qty=rules["min_qty"],
+            max_qty=rules["max_qty"],
+            min_notional=rules["min_notional"],
+            funding_rate=futures.last_funding_rate,
+            require_enabled=False,
+        )
+        if proposal.decision != "TRADE":
+            raise RuntimeError(
+                "DEMO test proposal blocked by risk controls: "
+                + "; ".join(proposal.risk_rejections)
+            )
+
+        payload = proposal.as_dict()
+        payload["test_proposal"] = True
+        row = self._store_and_send(
+            payload,
+            exposure=exposure,
+            margin_mode=margin_mode,
+        )
+        if row is None:
+            raise RuntimeError(
+                "An identical DEMO test proposal already exists."
+            )
+        return row
+
+    def create_and_send(self, symbol: str) -> dict[str, Any] | None:
+        if self.trading_cfg.paused:
+            return None
+        demo_state, exposure, margin_mode, actual_leverage = self._demo_state(symbol)
+        if margin_mode != self.trading_cfg.margin_mode:
+            return None
+        if actual_leverage != float(self.trading_cfg.risk.max_leverage):
+            return None
+        proposal = self.engine.proposal(
+            symbol,
+            account_state_override=demo_state,
+            require_enabled=False,
+        )
+        if proposal.decision != "TRADE":
+            return None
+        return self._store_and_send(
+            proposal.as_dict(),
+            exposure=exposure,
+            margin_mode=margin_mode,
+        )
 
     @staticmethod
     def _same_trade(old: dict[str, Any], fresh: dict[str, Any]) -> tuple[bool, str]:
@@ -782,13 +935,56 @@ class DemoTelegramApprovalService:
         ):
             raise RuntimeError("A Demo position already exists for the symbol.")
 
-        fresh = self.engine.proposal(
-            old["symbol"],
-            account_state_override=demo_state,
-            require_enabled=False,
-        ).as_dict()
-        if fresh["decision"] != "TRADE":
-            raise RuntimeError("Signal no longer qualifies after approval.")
+        if old.get("test_proposal"):
+            rules = self.engine.market.symbol_rules(old["symbol"])
+            futures = self.engine.market.futures_context(old["symbol"])
+            fresh_proposal = TradeProposal(
+                decision="TRADE",
+                symbol=old["symbol"],
+                market_type=old["market_type"],
+                direction=old["direction"],
+                strategy_version=old["strategy_version"],
+                signal_timestamp=int(old["signal_timestamp"]),
+                expires_at=int(old["expires_at"]),
+                order_type=old["order_type"],
+                market_regime=old.get("market_regime", "manual-test"),
+                entry_conditions=list(old.get("entry_conditions") or []),
+                entry_reference=float(old["entry_reference"]),
+                stop_loss=float(old["stop_loss"]),
+                take_profit=float(old["take_profit"]),
+                leverage=float(old["leverage"]),
+                spread_bps=float(old.get("spread_bps") or 0),
+                evidence=list(old.get("evidence") or []),
+                data_health=dict(old.get("data_health") or {}),
+            )
+            fresh_proposal = apply_risk(
+                fresh_proposal,
+                self.trading_cfg,
+                demo_state,
+                step_size=rules["step_size"],
+                tick_size=rules["tick_size"],
+                min_qty=rules["min_qty"],
+                max_qty=rules["max_qty"],
+                min_notional=rules["min_notional"],
+                funding_rate=futures.last_funding_rate,
+                require_enabled=False,
+            )
+            fresh = fresh_proposal.as_dict()
+            fresh["test_proposal"] = True
+            if fresh["decision"] != "TRADE":
+                raise RuntimeError(
+                    "Risk controls no longer permit this DEMO test proposal: "
+                    + "; ".join(fresh.get("risk_rejections") or [])
+                )
+        else:
+            fresh = self.engine.proposal(
+                old["symbol"],
+                account_state_override=demo_state,
+                require_enabled=False,
+            ).as_dict()
+            if fresh["decision"] != "TRADE":
+                raise RuntimeError("Signal no longer qualifies after approval.")
+
         same, reason = self._same_trade(old, fresh)
         if not same:
             raise RuntimeError(f"Proposal changed during revalidation: {reason}.")
