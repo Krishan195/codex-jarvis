@@ -357,3 +357,56 @@ jarvis-binance stats
 The built-in module contains no live-account order execution and stores no
 Binance API secret. Paper history is kept locally under Jarvis application
 data.
+
+
+## Deterministic Binance PAPER trading engine
+
+For structured trading-system work, use `jarvis-trader`. It is separate from
+the voice loop, so the normal Luna/low Jarvis path stays fast.
+
+Current phase implements:
+
+- Binance public market-data validation
+- BTCUSDT / ETHUSDT defaults
+- completed 15m signals with 1h / 4h context
+- versioned `trend-pullback-v1` rules
+- deterministic cost-aware position sizing and portfolio limits
+- persistent SQLite signals, positions and audit events
+- duplicate-signal protection and restart recovery
+- autonomous PAPER cycles / loop
+- pause, resume, status, performance and managed-close commands
+
+Install only this module:
+
+```bash
+cd ~/my-agent/codex-jarvis
+git pull
+bash tools/install_trading_agent.sh
+```
+
+Initialize an explicit paper account:
+
+```bash
+jarvis-trader init --capital 10000 --market futures
+jarvis-trader health
+jarvis-trader scan
+```
+
+Initialization does **not** enable new entries. Review
+`~/.config/codex-jarvis/trading.json`, then explicitly enable PAPER entries:
+
+```bash
+jarvis-trader enable-paper
+jarvis-trader paper-cycle
+```
+
+A dedicated paper process can run independently:
+
+```bash
+jarvis-trader paper-loop --seconds 60
+```
+
+Nothing starts that loop automatically.
+
+See [docs/TRADING_AGENT.md](docs/TRADING_AGENT.md) for exact strategy math,
+risk rules, paper-fill assumptions, tests and current limitations.
