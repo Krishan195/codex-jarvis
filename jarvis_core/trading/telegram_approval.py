@@ -94,6 +94,7 @@ class ApprovalStore:
             """
             CREATE TABLE IF NOT EXISTS telegram_trade_proposals (
                 proposal_id TEXT PRIMARY KEY,
+                signal_key TEXT,
                 environment TEXT NOT NULL,
                 created_at_ms INTEGER NOT NULL,
                 expires_at_ms INTEGER NOT NULL,
@@ -119,13 +120,44 @@ class ApprovalStore:
             VALUES(1,0);
             """
         )
+        columns = {
+            row["name"]
+            for row in self.conn.execute(
+                "PRAGMA table_info(telegram_trade_proposals)"
+            ).fetchall()
+        }
+        if "signal_key" not in columns:
+            self.conn.execute(
+                "ALTER TABLE telegram_trade_proposals ADD COLUMN signal_key TEXT"
+            )
+        self.conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_trade_proposals_signal
+            ON telegram_trade_proposals(signal_key)
+            WHERE signal_key IS NOT NULL
+            """
+        )
         self.conn.commit()
 
     def create(self, payload: dict[str, Any], *, expiry_seconds: int) -> dict[str, Any]:
+        signal_key = (
+            f"DEMO:{payload.get('symbol')}:{payload.get('strategy_version')}:"
+            f"{payload.get('signal_timestamp')}:{payload.get('direction')}"
+        )
+        existing = self.conn.execute(
+            "SELECT proposal_id FROM telegram_trade_proposals WHERE signal_key=?",
+            (signal_key,),
+        ).fetchone()
+        if existing:
+            row = self.get(existing["proposal_id"])
+            row["_created"] = False
+            return row
+
         proposal_id = pysecrets.token_hex(8)
         now = int(time.time() * 1000)
         row = {
             "proposal_id": proposal_id,
+            "signal_key": signal_key,
             "environment": "DEMO",
             "created_at_ms": now,
             "expires_at_ms": now + int(expiry_seconds) * 1000,
@@ -135,16 +167,20 @@ class ApprovalStore:
         self.conn.execute(
             """
             INSERT INTO telegram_trade_proposals(
-                proposal_id,environment,created_at_ms,expires_at_ms,status,payload_json
-            ) VALUES(?,?,?,?,?,?)
+                proposal_id,signal_key,environment,created_at_ms,expires_at_ms,
+                status,payload_json
+            ) VALUES(?,?,?,?,?,?,?)
             """,
             (
-                row["proposal_id"], row["environment"], row["created_at_ms"],
-                row["expires_at_ms"], row["status"], row["payload_json"],
+                row["proposal_id"], row["signal_key"], row["environment"],
+                row["created_at_ms"], row["expires_at_ms"], row["status"],
+                row["payload_json"],
             ),
         )
         self.conn.commit()
-        return self.get(proposal_id)
+        out = self.get(proposal_id)
+        out["_created"] = True
+        return out
 
     def get(self, proposal_id: str) -> dict[str, Any]:
         row = self.conn.execute(
@@ -292,6 +328,16 @@ class ApprovalStore:
             ),
         )
         self.conn.commit()
+
+    def executed_open_candidates(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT proposal_id FROM telegram_trade_proposals
+             WHERE status='EXECUTED'
+             ORDER BY created_at_ms
+            """
+        ).fetchall()
+        return [self.get(r["proposal_id"]) for r in rows]
 
     def pending(self) -> list[dict[str, Any]]:
         self.expire_due()
@@ -484,7 +530,7 @@ class DemoTelegramApprovalService:
         self.bot = bot or TelegramBot(self.telegram_cfg)
         self.engine = TradingEngine(self.trading_cfg)
 
-    def _demo_state(self) -> tuple[AccountState, float, str]:
+    def _demo_state(self, symbol: str) -> tuple[AccountState, float, str, float]:
         balances = demo_exchange.balance()
         usdt = next((x for x in balances if x.get("asset") == "USDT"), None)
         if not usdt:
@@ -507,18 +553,24 @@ class DemoTelegramApprovalService:
             peak_equity=self.trading_cfg.risk.allocated_capital_quote,
             state_certain=True,
         )
-        margin_mode = "ISOLATED"
-        symbol_rows = demo_exchange.positions(self.trading_cfg.permitted_symbols[0])
+        margin_mode = "UNKNOWN"
+        actual_leverage = 0.0
+        symbol_rows = demo_exchange.positions(symbol)
         if symbol_rows:
             margin_mode = str(symbol_rows[0].get("margin_type") or "unknown").upper()
+            actual_leverage = float(symbol_rows[0].get("leverage") or 0)
         if available <= 0:
             state.state_certain = False
-        return state, exposure, margin_mode
+        return state, exposure, margin_mode, actual_leverage
 
     def create_and_send(self, symbol: str) -> dict[str, Any] | None:
         if self.trading_cfg.paused:
             return None
-        demo_state, exposure, margin_mode = self._demo_state()
+        demo_state, exposure, margin_mode, actual_leverage = self._demo_state(symbol)
+        if margin_mode != self.trading_cfg.margin_mode:
+            return None
+        if actual_leverage != float(self.trading_cfg.risk.max_leverage):
+            return None
         proposal = self.engine.proposal(symbol, account_state_override=demo_state)
         if proposal.decision != "TRADE":
             return None
@@ -529,6 +581,8 @@ class DemoTelegramApprovalService:
             payload,
             expiry_seconds=self.telegram_cfg.approval_expiry_seconds,
         )
+        if not row.pop("_created", False):
+            return None
         msg = self.bot.send(
             _proposal_message(
                 row,
@@ -555,7 +609,12 @@ class DemoTelegramApprovalService:
 
     def revalidate(self, row: dict[str, Any]) -> dict[str, Any]:
         old = row["payload"]
-        demo_state, exposure, margin_mode = self._demo_state()
+        demo_state, exposure, margin_mode, actual_leverage = self._demo_state(old["symbol"])
+
+        if margin_mode != str(old.get("margin_mode") or "").upper():
+            raise RuntimeError("Margin mode changed after approval.")
+        if actual_leverage != float(old["leverage"]):
+            raise RuntimeError("Leverage changed after approval.")
 
         if demo_exchange.open_orders(old["symbol"]):
             raise RuntimeError("Pending Demo orders exist for the symbol.")
@@ -606,6 +665,14 @@ class DemoTelegramApprovalService:
             }:
                 return latest
             time.sleep(0.75)
+
+        if str(latest.get("status")) == "PARTIALLY_FILLED":
+            # Freeze the actual exposure before placing protection; otherwise
+            # later fills could exceed the quantity we protect.
+            try:
+                demo_exchange.cancel_order(symbol, client_id=client_id)
+            finally:
+                latest = demo_exchange.query_order(symbol, client_id=client_id)
         return latest
 
     def execute_approved(self, proposal_id: str) -> dict[str, Any]:
@@ -699,6 +766,53 @@ class DemoTelegramApprovalService:
             client_id=client_id,
         )
         return final
+
+    def reconcile_executed(self) -> None:
+        for row in self.store.executed_open_candidates():
+            p = row["payload"]
+            result = row.get("result") or {}
+            entry = result.get("entry") or {}
+            if float(entry.get("executedQty") or 0) <= 0:
+                continue
+            active = [
+                x for x in demo_exchange.positions(p["symbol"])
+                if abs(float(x["position_amt"])) > 0
+            ]
+            if active:
+                continue
+
+            protection = result.get("protection") or {}
+            for key in ("stop_client_id", "target_client_id"):
+                cid = protection.get(key)
+                if cid:
+                    try:
+                        demo_exchange.cancel_order(p["symbol"], client_id=cid)
+                    except Exception:
+                        pass
+
+            start_ms = int(row["execution_started_at_ms"] or row["created_at_ms"])
+            trades = demo_exchange.user_trades(
+                p["symbol"],
+                start_time_ms=start_ms,
+            )
+            realized = sum(float(x.get("realizedPnl") or 0) for x in trades)
+            commissions = sum(float(x.get("commission") or 0) for x in trades)
+            self.store.mark(
+                row["proposal_id"],
+                "CLOSED",
+                reason="Demo position no longer open",
+                result={
+                    **result,
+                    "close_summary": {
+                        "realized_pnl": realized,
+                        "commissions": commissions,
+                    },
+                },
+            )
+            self.bot.send(
+                f"DEMO — Position closed for {p['symbol']}. "
+                f"Realized P&L: {realized:.4f}; commissions: {commissions:.4f}."
+            )
 
     def handle_callback(self, callback: dict[str, Any]) -> None:
         callback_id = str(callback.get("id") or "")
@@ -802,6 +916,7 @@ class DemoTelegramApprovalService:
                     self.handle_message(update["message"])
             finally:
                 self.store.set_offset(update_id)
+        self.reconcile_executed()
         return len(updates)
 
     def propose_scan(self) -> list[str]:
