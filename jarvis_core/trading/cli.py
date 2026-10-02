@@ -10,6 +10,7 @@ import time
 from .config import CONFIG_PATH, initialize_paper_config, load_config
 from .engine import TradingEngine
 from .journal import TradingJournal
+from . import demo_exchange
 
 
 def _json(value) -> None:
@@ -130,11 +131,74 @@ def cmd_cancel_pending(args) -> int:
     return 0
 
 
+def cmd_demo_health(_args) -> int:
+    _json(demo_exchange.auth_health())
+    return 0
+
+
+def cmd_demo_balance(_args) -> int:
+    _json(demo_exchange.balance())
+    return 0
+
+
+def cmd_demo_positions(args) -> int:
+    _json(demo_exchange.positions(args.symbol))
+    return 0
+
+
+def cmd_demo_open_orders(args) -> int:
+    _json(demo_exchange.open_orders(args.symbol))
+    return 0
+
+
+def cmd_demo_order_test(args) -> int:
+    _json(
+        demo_exchange.market_order(
+            args.symbol,
+            args.side,
+            args.quantity,
+            client_id=args.client_id,
+            reduce_only=args.reduce_only,
+            test_only=True,
+        )
+    )
+    return 0
+
+
+def cmd_demo_market(args) -> int:
+    _json(
+        demo_exchange.market_order(
+            args.symbol,
+            args.side,
+            args.quantity,
+            client_id=args.client_id,
+            reduce_only=args.reduce_only,
+            test_only=False,
+        )
+    )
+    return 0
+
+
+def cmd_demo_order(args) -> int:
+    _json(demo_exchange.query_order(args.symbol, client_id=args.client_id))
+    return 0
+
+
+def cmd_demo_cancel(args) -> int:
+    _json(demo_exchange.cancel_order(args.symbol, client_id=args.client_id))
+    return 0
+
+
+def cmd_demo_close(args) -> int:
+    _json(demo_exchange.close_symbol_position(args.symbol))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jarvis-trader",
         description=(
-            "Deterministic Binance market analysis, risk validation and PAPER execution."
+            "Deterministic Binance market analysis, PAPER execution, and Binance Futures Demo integration."
         ),
     )
     p.add_argument("--config", help="Override trading config path.")
@@ -170,6 +234,50 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("events")
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(func=cmd_events)
+    s = sub.add_parser("demo-health")
+    s.set_defaults(func=cmd_demo_health)
+
+    s = sub.add_parser("demo-balance")
+    s.set_defaults(func=cmd_demo_balance)
+
+    s = sub.add_parser("demo-positions")
+    s.add_argument("--symbol")
+    s.set_defaults(func=cmd_demo_positions)
+
+    s = sub.add_parser("demo-open-orders")
+    s.add_argument("--symbol")
+    s.set_defaults(func=cmd_demo_open_orders)
+
+    s = sub.add_parser("demo-order-test")
+    s.add_argument("symbol")
+    s.add_argument("side", choices=["BUY", "SELL", "buy", "sell"])
+    s.add_argument("quantity", type=float)
+    s.add_argument("--client-id")
+    s.add_argument("--reduce-only", action="store_true")
+    s.set_defaults(func=cmd_demo_order_test)
+
+    s = sub.add_parser("demo-market")
+    s.add_argument("symbol")
+    s.add_argument("side", choices=["BUY", "SELL", "buy", "sell"])
+    s.add_argument("quantity", type=float)
+    s.add_argument("--client-id")
+    s.add_argument("--reduce-only", action="store_true")
+    s.set_defaults(func=cmd_demo_market)
+
+    s = sub.add_parser("demo-order")
+    s.add_argument("symbol")
+    s.add_argument("client_id")
+    s.set_defaults(func=cmd_demo_order)
+
+    s = sub.add_parser("demo-cancel")
+    s.add_argument("symbol")
+    s.add_argument("client_id")
+    s.set_defaults(func=cmd_demo_cancel)
+
+    s = sub.add_parser("demo-close")
+    s.add_argument("symbol")
+    s.set_defaults(func=cmd_demo_close)
+
     return p
 
 
