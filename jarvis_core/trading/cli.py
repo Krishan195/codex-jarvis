@@ -268,19 +268,33 @@ def cmd_telegram_loop(args) -> int:
     service = DemoTelegramApprovalService()
     scan_every = max(15, int(args.scan_seconds))
     next_scan = 0.0
+    consecutive_errors = 0
     print(
         "DEMO Telegram approval loop running. New entries require an authorized "
         "Approve button. Ctrl+C to stop."
     )
     try:
         while True:
-            now = time.monotonic()
-            if now >= next_scan:
-                created = service.propose_scan()
-                if created:
-                    print("Sent proposal(s): " + ", ".join(created))
-                next_scan = now + scan_every
-            service.poll_once()
+            try:
+                now = time.monotonic()
+                if now >= next_scan:
+                    created = service.propose_scan()
+                    if created:
+                        print("Sent proposal(s): " + ", ".join(created))
+                    next_scan = now + scan_every
+                service.poll_once()
+                consecutive_errors = 0
+            except Exception as exc:
+                # Execution-side ambiguous/failure states are persisted before
+                # they reach here. Never auto-retry an order from this loop.
+                consecutive_errors += 1
+                delay = min(30, 2 ** min(consecutive_errors, 4))
+                print(
+                    f"DEMO loop warning: {exc}. "
+                    f"Continuing in {delay}s; no order is retried automatically.",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
     except KeyboardInterrupt:
         print("DEMO Telegram approval loop stopped.")
     return 0
