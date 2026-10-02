@@ -221,6 +221,10 @@ class TradingJournal:
             "SELECT * FROM positions WHERE status='CLOSED' ORDER BY id"
         ).fetchall()
         pnls = [float(r["realized_pnl"] or 0) for r in rows]
+        total_fees = sum(
+            float(r["entry_fees"] or 0) + float(r["exit_fees"] or 0)
+            for r in rows
+        )
         wins = [x for x in pnls if x > 0]
         losses = [x for x in pnls if x < 0]
         gross_win = sum(wins)
@@ -238,6 +242,7 @@ class TradingJournal:
             "gross_loss": gross_loss,
             "profit_factor": (gross_win / gross_loss) if gross_loss else None,
             "realized_pnl": realized,
+            "net_fees": total_fees,
             "realized_equity": equity,
             "realized_drawdown_percent": max(drawdown, 0.0),
         }
