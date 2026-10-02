@@ -142,6 +142,7 @@ class TradingEngine:
                 self.cfg,
                 self.account_state(),
                 step_size=rules["step_size"],
+                tick_size=rules["tick_size"],
                 min_qty=rules["min_qty"],
                 max_qty=rules["max_qty"],
                 min_notional=rules["min_notional"],
@@ -230,6 +231,11 @@ class TradingEngine:
         performance = self.journal.performance(
             self.cfg.risk.allocated_capital_quote
         )
+        realized_equity = (
+            self.cfg.risk.allocated_capital_quote
+            + self.journal.realized_pnl_total()
+        )
+        unrealized = state.current_equity - realized_equity
         return {
             "mode": self.cfg.mode,
             "enabled": self.cfg.enabled,
@@ -241,5 +247,6 @@ class TradingEngine:
             "aggregate_open_notional": state.aggregate_notional,
             "current_equity_estimate": state.current_equity,
             "realized_pnl_today": state.realized_pnl_today,
+            "unrealized_pnl_estimate": unrealized,
             "performance": performance,
         }
