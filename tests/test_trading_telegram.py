@@ -10,6 +10,8 @@ from jarvis_core.trading.telegram_approval import (
     ApprovalStore,
     DemoTelegramApprovalService,
     TelegramApprovalConfig,
+    TelegramBot,
+    TelegramTransientError,
 )
 from jarvis_core.trading.config import TradingConfig, RiskConfig
 from jarvis_core.trading.models import BookSnapshot, TradeProposal
@@ -425,6 +427,31 @@ class SymbolConfigTests(unittest.TestCase):
                 health = service.health()
             self.assertTrue(health["symbols"]["BTCUSDT"]["margin_mode_matches"])
             self.assertTrue(health["symbols"]["BTCUSDT"]["leverage_matches"])
+
+
+class TelegramPollingTests(unittest.TestCase):
+    def test_transient_long_poll_timeout_is_empty_poll(self):
+        bot = object.__new__(TelegramBot)
+        bot.cfg = TelegramApprovalConfig(user_id=123, chat_id=456)
+        bot._call = lambda *args, **kwargs: (_ for _ in ()).throw(
+            TelegramTransientError("timeout")
+        )
+        self.assertEqual(bot.updates(0), [])
+
+    def test_poll_offset_is_not_advanced_on_empty_timeout_poll(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = ApprovalStore(Path(td) / "state.sqlite3")
+            service = service_with_store(store)
+
+            class TimeoutSafeBot(FakeBot):
+                def updates(self, offset):
+                    return []
+
+            service.bot = TimeoutSafeBot()
+            before = store.get_offset()
+            count = service.poll_once()
+            self.assertEqual(count, 0)
+            self.assertEqual(store.get_offset(), before)
 
 
 if __name__ == "__main__":
