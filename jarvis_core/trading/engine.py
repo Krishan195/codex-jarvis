@@ -180,6 +180,18 @@ class TradingEngine:
         opened: list[dict[str, Any]] = []
         proposals: list[dict[str, Any]] = []
 
+        if any(
+            row.get("status") == "PROTECTION_CHECK_FAILED"
+            for row in exits
+            if isinstance(row, dict)
+        ):
+            return {
+                "managed_exits": exits,
+                "opened": [],
+                "proposals": [],
+                "new_entries": "blocked-protection-check-failed",
+            }
+
         if not self.cfg.enabled or self.cfg.paused:
             return {
                 "managed_exits": exits,
