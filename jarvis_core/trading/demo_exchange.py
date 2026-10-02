@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -18,6 +19,7 @@ import urllib.request
 from typing import Any
 
 from jarvis_core import secrets
+from .journal import DB_PATH
 
 DEMO_BASE_URL = "https://demo-fapi.binance.com"
 API_KEY_SECRET = "binance-demo-api-key"
@@ -255,6 +257,64 @@ def cancel_order(symbol: str, *, client_id: str) -> dict[str, Any]:
     )
 
 
+def _validate_execution_approval(
+    proposal_id: str | None,
+    *,
+    symbol: str,
+    side: str,
+    quantity: float,
+) -> None:
+    """Enforce Telegram approval at the exchange-execution boundary.
+
+    New exposure is allowed only for an unexpired DEMO proposal atomically
+    claimed into EXECUTING state by the approval service.
+    """
+    if not proposal_id:
+        raise DemoExchangeError(
+            "Exposure-increasing Demo orders require a claimed Telegram proposal."
+        )
+    if not DB_PATH.exists():
+        raise DemoExchangeError("Trading approval database is unavailable.")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """
+            SELECT environment,status,expires_at_ms,payload_json,
+                   approved_by_user_id,approved_at_ms
+              FROM telegram_trade_proposals
+             WHERE proposal_id=?
+            """,
+            (proposal_id,),
+        ).fetchone()
+    except sqlite3.Error as exc:
+        raise DemoExchangeError("Trading approval state is unavailable.") from exc
+    finally:
+        conn.close()
+
+    if not row:
+        raise DemoExchangeError("Unknown Telegram trade proposal.")
+    if row["environment"] != "DEMO" or row["status"] != "EXECUTING":
+        raise DemoExchangeError(
+            f"Proposal is not authorized for execution: {row['status']}."
+        )
+    if not row["approved_by_user_id"] or not row["approved_at_ms"]:
+        raise DemoExchangeError("Proposal has no verified Telegram approval.")
+    if int(row["expires_at_ms"]) < server_time_ms():
+        raise DemoExchangeError("Telegram trade approval expired.")
+
+    payload = json.loads(row["payload_json"])
+    expected_side = "BUY" if payload.get("direction") == "LONG" else "SELL"
+    if str(payload.get("symbol") or "").upper() != symbol.upper():
+        raise DemoExchangeError("Order symbol differs from approved proposal.")
+    if expected_side != side.upper():
+        raise DemoExchangeError("Order side differs from approved proposal.")
+    expected_qty = float(payload.get("quantity") or 0)
+    if abs(expected_qty - float(quantity)) > max(1e-12, expected_qty * 1e-9):
+        raise DemoExchangeError("Order quantity differs from approved proposal.")
+
+
 def market_order(
     symbol: str,
     side: str,
@@ -263,12 +323,21 @@ def market_order(
     client_id: str | None = None,
     reduce_only: bool = False,
     test_only: bool = False,
+    proposal_id: str | None = None,
 ) -> dict[str, Any]:
     side = side.upper()
     if side not in {"BUY", "SELL"}:
         raise ValueError("side must be BUY or SELL")
     if quantity <= 0:
         raise ValueError("quantity must be positive")
+
+    if not test_only and not reduce_only:
+        _validate_execution_approval(
+            proposal_id,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+        )
 
     cid = _validate_client_id(client_id or make_client_id(symbol))
     params: dict[str, Any] = {
