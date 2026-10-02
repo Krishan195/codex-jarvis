@@ -84,6 +84,7 @@ class TradingEngine:
             open_positions=len(self.journal.open_positions()),
             aggregate_notional=self.journal.aggregate_open_notional(),
             realized_pnl_today=self.journal.realized_pnl_today(),
+            unrealized_pnl=unrealized,
             current_equity=realized_equity + unrealized,
             peak_equity=self.journal.peak_realized_equity(capital),
             state_certain=True,
