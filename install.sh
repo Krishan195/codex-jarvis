@@ -229,6 +229,13 @@ exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.binance_expert "\$@
 EOF
 chmod +x "$HOME/.local/bin/jarvis-binance"
 
+cat > "$HOME/.local/bin/jarvis-trader" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$ROOT"
+exec "$HOME_DIR/.jarvis-core-venv/bin/python" -m jarvis_core.trading.cli "\$@"
+EOF
+chmod +x "$HOME/.local/bin/jarvis-trader"
+
 if [ "$(uname -s)" = "Linux" ]; then
   desktop_dir="$HOME/Desktop"
   mkdir -p "$desktop_dir"
@@ -323,6 +330,7 @@ say "Core status: jarvis-core status"
 say "Browser: jarvis-core browser-start"
 say "Freelance agent: jarvis-freelance status"
 say "Binance expert: jarvis-binance analyze BTCUSDT --market futures --interval 15m"
+say "Trading engine: jarvis-trader status"
 say "Website password vault: jarvis-core credential-set example.com --username USER"
 say "Google setup: jarvis-core google-auth --client-json /path/to/client_secret.json"
 say "Or double-click: $HOME/Desktop/Jarvis.desktop"
