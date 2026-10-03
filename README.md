@@ -452,6 +452,65 @@ The production/live Binance Futures trading endpoint is not implemented in this
 repository.
 
 
+## Manual voice requests and risk review
+
+Jarvis can discuss a user-directed **Demo** trade while its independent
+Telegram scanner continues running. It explains the requested margin versus
+total exposure, estimated loss at the stop, net target, leverage scenarios,
+and whether the baseline strategy agrees. It can recommend waiting or lower
+exposure, explain why, and respect the user's decision within configured limits.
+
+Install the commands and refreshed voice instructions:
+
+```bash
+git pull --ff-only
+bash tools/install_manual_trading.sh
+```
+
+Restart the voice session and the existing Telegram loop to load the update.
+The installer backs up a replaced voice brain, preserves voice configuration,
+and does not start a service or change trading limits. The laptop must be awake
+and online for the loop to run.
+
+Manual submissions are disabled by default. For an explicitly chosen maximum
+of **10 USDT margin per manual trade and 10x leverage**, enable them with:
+
+```bash
+jarvis-trader manual-config --enable --max-margin 10 --max-leverage 10
+jarvis-trader manual-review BTCUSDT LONG --margin 10 --leverage 10
+```
+
+This produces a **review**, not a Telegram message or an order. A voice example:
+
+> Jarvis, review a Demo BTC long using 10 USDT margin at 10x. Explain the risk
+> and what you would recommend before sending it for approval.
+
+Ambiguous amounts must be clarified. `--margin 10` at 10x requests up to 100
+USDT exposure; `--notional 10` requests up to 10 USDT exposure. Exchange step
+sizes can round this down; minimum-notional rules can block the request. The
+engine never increases the amount to meet an exchange minimum. Fees are extra.
+
+After discussing the review, an explicit "send it for approval" maps to:
+
+```bash
+jarvis-trader manual-propose REVIEW_ID
+```
+
+Replace `REVIEW_ID` with the returned ID. The review expires after five minutes;
+the Telegram approval normally expires after 120 seconds (or earlier when the
+review expires). Only the authorized Telegram button can approve execution.
+The existing `jarvis-trader telegram-loop --scan-seconds 60` must be running
+to receive it. The CLI prevents two updated pollers from running concurrently.
+
+Manual requests can waive strategy entry filters, but not account, exposure,
+daily loss, drawdown, liquidity or exchange limits. Manual limits are separate
+from the scanner's strategy leverage. No setting is raised just to make a trade
+pass. Use `manual-config --disable` to stop new manual proposals; protection of
+already-filled positions remains in place.
+
+See [manual trade details](docs/TRADING_AGENT.md#manual-demo-trade-review) for
+stop/target suggestions, temporary leverage changes, and limitations.
+
 ## Telegram-gated Demo trading
 
 New Binance Futures Demo exposure can now be gated by a private Telegram

@@ -43,6 +43,7 @@ def apply_risk(
     min_notional: float,
     funding_rate: float | None = None,
     require_enabled: bool = True,
+    fixed_quantity: float | None = None,
 ) -> TradeProposal:
     errors: list[str] = []
     if proposal.decision != "TRADE":
@@ -107,12 +108,26 @@ def apply_risk(
         else 0.0
     )
     unit_loss = distance + entry_fee_unit + exit_fee_unit + slippage_unit + funding_unit
-    quantity = _round_down(risk_budget / unit_loss, step_size)
+    if fixed_quantity is None:
+        quantity = _round_down(risk_budget / unit_loss, step_size)
+    else:
+        quantity = float(fixed_quantity)
+        if not math.isfinite(quantity) or quantity <= 0:
+            proposal.decision = "WAIT"
+            proposal.risk_rejections = ["manual quantity must be finite and positive"]
+            return proposal
+        if abs(quantity - _round_down(quantity, step_size)) > max(1e-12, step_size * 1e-7):
+            errors.append("manual quantity does not match exchange step size")
+        if quantity * unit_loss > risk_budget + 1e-9:
+            errors.append("manual trade exceeds the configured loss budget")
 
     if quantity <= 0 or quantity < min_qty:
         errors.append("risk-sized quantity is below exchange minimum")
     if max_qty > 0 and quantity > max_qty:
-        quantity = _round_down(max_qty, step_size)
+        if fixed_quantity is None:
+            quantity = _round_down(max_qty, step_size)
+        else:
+            errors.append("manual quantity exceeds exchange maximum")
 
     notional = quantity * entry
     if min_notional > 0 and notional < min_notional:

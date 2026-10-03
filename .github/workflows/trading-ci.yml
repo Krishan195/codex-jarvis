@@ -18,7 +18,7 @@ jobs:
       - name: Run deterministic trading tests
         run: |
           set -o pipefail
-          python -m unittest -v tests.test_trading_paper tests.test_trading_telegram 2>&1 | tee trading-test-output.txt
+          python -m unittest discover -s tests -p 'test_trading_*.py' -v 2>&1 | tee trading-test-output.txt
       - name: Upload trading test output
         if: always()
         uses: actions/upload-artifact@v4
@@ -27,4 +27,4 @@ jobs:
           path: trading-test-output.txt
           retention-days: 3
       - name: Validate installer shell
-        run: bash -n tools/install_trading_agent.sh
+        run: bash -n tools/install_trading_agent.sh tools/install_manual_trading.sh

@@ -233,6 +233,38 @@ def change_margin_type(symbol: str, margin_type: str) -> dict[str, Any]:
         raise
 
 
+def position_mode() -> dict[str, Any]:
+    return _signed_request("GET", "/fapi/v1/positionSide/dual")
+
+
+def open_algo_orders(symbol: str) -> list[dict[str, Any]]:
+    return list(_signed_request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol.upper()}))
+
+
+def cancel_protection(symbol: str, *, client_id: str, algo: bool = True) -> dict[str, Any]:
+    if not algo:  # Existing proposals used the older regular-order API.
+        return cancel_order(symbol, client_id=client_id)
+    return _signed_request("DELETE", "/fapi/v1/algoOrder",
+                           {"clientAlgoId": _validate_client_id(client_id)})
+
+
+def change_approved_leverage(proposal_id: str, symbol: str, leverage: int) -> dict[str, Any]:
+    """Changing account leverage is included in this exact manual approval."""
+    with sqlite3.connect(DB_PATH) as conn:
+        raw = conn.execute("SELECT payload_json FROM telegram_trade_proposals WHERE proposal_id=?",
+                           (proposal_id,)).fetchone()
+    if not raw:
+        raise DemoExchangeError("Unknown manual proposal.")
+    p = json.loads(raw[0])
+    if p.get("source") != "MANUAL" or int(p["leverage"]) != leverage:
+        raise DemoExchangeError("Leverage differs from the approved manual proposal.")
+    _validate_execution_approval(proposal_id, symbol=symbol,
+        side="BUY" if p["direction"] == "LONG" else "SELL", quantity=p["quantity"])
+    if any(abs(float(x["position_amt"])) > 0 for x in positions(symbol)) or open_orders(symbol) or open_algo_orders(symbol):
+        raise DemoExchangeError("Cannot change leverage on an occupied Demo symbol.")
+    return change_leverage(symbol, leverage)
+
+
 def positions(symbol: str | None = None) -> list[dict[str, Any]]:
     params = {"symbol": symbol.upper()} if symbol else {}
     rows = _signed_request("GET", "/fapi/v3/positionRisk", params)
@@ -506,21 +538,30 @@ def conditional_market_order(
     if quantity <= 0 or trigger_price <= 0:
         raise ValueError("quantity and trigger_price must be positive")
     cid = _validate_client_id(client_id)
-    return _signed_request(
+    result = _signed_request(
         "POST",
-        "/fapi/v1/order",
+        "/fapi/v1/algoOrder",
         {
+            "algoType": "CONDITIONAL",
             "symbol": symbol.upper(),
             "side": side,
             "type": order_type,
             "quantity": format(quantity, ".12g"),
-            "stopPrice": format(trigger_price, ".12g"),
+            "triggerPrice": format(trigger_price, ".12g"),
             "reduceOnly": "true",
             "workingType": "MARK_PRICE",
             "priceProtect": "true",
-            "newClientOrderId": cid,
+            "clientAlgoId": cid,
         },
     )
+    if not result.get("algoId") or result.get("algoStatus") != "NEW":
+        raise DemoExchangeError("Demo protective order was not confirmed as NEW.")
+    return result
+
+
+def protection_ids(symbol: str, proposal_id: str) -> dict[str, str]:
+    return {"stop_client_id": make_client_id(symbol, f"s-{proposal_id[:8]}"),
+            "target_client_id": make_client_id(symbol, f"t-{proposal_id[:8]}")}
 
 
 def place_protection(
@@ -541,9 +582,8 @@ def place_protection(
     if direction not in {"LONG", "SHORT"}:
         raise ValueError("direction must be LONG or SHORT")
     exit_side = "SELL" if direction == "LONG" else "BUY"
-    base = proposal_id[:8]
-    stop_id = make_client_id(symbol, f"s-{base}")
-    target_id = make_client_id(symbol, f"t-{base}")
+    ids = protection_ids(symbol, proposal_id)
+    stop_id, target_id = ids["stop_client_id"], ids["target_client_id"]
     stop = conditional_market_order(
         symbol,
         exit_side,
@@ -563,7 +603,7 @@ def place_protection(
         )
     except Exception:
         try:
-            cancel_order(symbol, client_id=stop_id)
+            cancel_protection(symbol, client_id=stop_id)
         except Exception:
             pass
         raise
@@ -573,4 +613,5 @@ def place_protection(
         "stop_client_id": stop_id,
         "target_client_id": target_id,
         "quantity": quantity,
+        "algo": True,
     }

@@ -3,3 +3,5 @@ client_secret*.json
 credentials*.json
 token*.json
 .jarvis-core-venv/
+__pycache__/
+*.py[cod]

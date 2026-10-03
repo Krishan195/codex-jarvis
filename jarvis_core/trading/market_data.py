@@ -164,9 +164,11 @@ class BinancePublicMarketData:
             {"symbol": _symbol(symbol)},
         )
         rows = data.get("symbols") or []
-        if not rows:
-            raise MarketDataError(f"Symbol not found: {symbol}")
-        return rows[0]
+        # Futures exchangeInfo can return ALL symbols even with a symbol query.
+        for row in rows:
+            if row.get("symbol") == _symbol(symbol):
+                return row
+        raise MarketDataError(f"Symbol not found: {symbol}")
 
     def klines(self, symbol: str, interval: str, *, limit: int = 250) -> list[Candle]:
         if interval not in INTERVAL_MS:
@@ -240,12 +242,12 @@ class BinancePublicMarketData:
             return FuturesContext()
         sym = _symbol(symbol)
         premium = _request_json(
-            (FUTURES_BASE,),
+            self.bases,
             "/fapi/v1/premiumIndex",
             {"symbol": sym},
         )
         oi = _request_json(
-            (FUTURES_BASE,),
+            self.bases,
             "/fapi/v1/openInterest",
             {"symbol": sym},
         )

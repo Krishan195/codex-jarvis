@@ -53,6 +53,14 @@ class RiskConfig:
 
 
 @dataclass
+class ManualTradingConfig:
+    # Independent of the strategy's leverage setting. Explicit local opt-in.
+    enabled: bool = False
+    max_leverage: int = 2
+    max_margin_quote: float = 10.0
+
+
+@dataclass
 class TradingConfig:
     schema_version: int = 1
     mode: str = "PAPER"
@@ -64,10 +72,16 @@ class TradingConfig:
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     costs: CostConfig = field(default_factory=CostConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    manual: ManualTradingConfig = field(default_factory=ManualTradingConfig)
     stale_grace_seconds: int = 120
     paper_loop_seconds: int = 60
 
     def validate(self) -> None:
+        import math
+        if not 1 <= self.manual.max_leverage <= 125 or int(self.manual.max_leverage) != self.manual.max_leverage:
+            raise ValueError("manual.max_leverage must be an integer from 1 to 125")
+        if not math.isfinite(self.manual.max_margin_quote) or self.manual.max_margin_quote <= 0:
+            raise ValueError("manual.max_margin_quote must be finite and positive")
         if self.mode != "PAPER":
             raise ValueError("This build enables PAPER mode only.")
         if self.market_type not in {"spot", "futures"}:
@@ -110,6 +124,7 @@ def _construct(data: dict[str, Any]) -> TradingConfig:
         strategy=StrategyConfig(**data.get("strategy", {})),
         costs=CostConfig(**data.get("costs", {})),
         risk=RiskConfig(**data.get("risk", {})),
+        manual=ManualTradingConfig(**data.get("manual", {})),
         stale_grace_seconds=int(data.get("stale_grace_seconds", 120)),
         paper_loop_seconds=max(15, int(data.get("paper_loop_seconds", 60))),
     )

@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import fcntl
+from contextlib import contextmanager
 import os
 import secrets as pysecrets
 import socket
@@ -29,6 +31,7 @@ from .engine import TradingEngine
 from .journal import DB_PATH, TradingJournal
 from .risk import AccountState
 from . import demo_exchange
+from .manual import DemoMarketData, ManualRequest, ManualReviewStore, build_review, assess_fixed_trade, validate_book
 
 TELEGRAM_TOKEN_SECRET = "telegram-trading-bot-token"
 TELEGRAM_CONFIG_PATH = Path.home() / ".config" / "codex-jarvis" / "trading-telegram.json"
@@ -131,6 +134,11 @@ class ApprovalStore:
             );
             INSERT OR IGNORE INTO telegram_risk_state(singleton,peak_equity)
             VALUES(1,0);
+            CREATE TABLE IF NOT EXISTS manual_leverage_restores (
+                proposal_id TEXT PRIMARY KEY, symbol TEXT NOT NULL,
+                previous INTEGER NOT NULL, requested INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'NEEDED'
+            );
             """
         )
         columns = {
@@ -157,6 +165,8 @@ class ApprovalStore:
             f"DEMO:{payload.get('symbol')}:{payload.get('strategy_version')}:"
             f"{payload.get('signal_timestamp')}:{payload.get('direction')}"
         )
+        if payload.get("source") == "MANUAL":
+            signal_key = "DEMO:MANUAL:" + payload["manual_review_id"]
         existing = self.conn.execute(
             "SELECT proposal_id FROM telegram_trade_proposals WHERE signal_key=?",
             (signal_key,),
@@ -173,7 +183,8 @@ class ApprovalStore:
             "signal_key": signal_key,
             "environment": "DEMO",
             "created_at_ms": now,
-            "expires_at_ms": now + int(expiry_seconds) * 1000,
+            "expires_at_ms": min(now + int(expiry_seconds) * 1000,
+                                 int(payload.get("expires_at") or now + int(expiry_seconds) * 1000)),
             "status": "PENDING",
             "payload_json": json.dumps(payload, sort_keys=True),
         }
@@ -221,7 +232,7 @@ class ApprovalStore:
             """
             UPDATE telegram_trade_proposals
                SET status='EXPIRED', reason='approval window expired'
-             WHERE status='PENDING' AND expires_at_ms < ?
+             WHERE status IN ('PENDING','APPROVED') AND expires_at_ms < ?
             """,
             (now,),
         )
@@ -362,6 +373,29 @@ class ApprovalStore:
             """
         ).fetchall()
         return [self.get(r["proposal_id"]) for r in rows]
+
+    @contextmanager
+    def execution_lock(self):
+        """One account-changing execution/reconciliation at a time across CLIs."""
+        with self.path.with_suffix(".execution.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+    @contextmanager
+    def poller_lock(self):
+        """Prevent voice/CLI invocations from starting competing update consumers."""
+        with self.path.with_suffix(".telegram-loop.lock").open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("A Telegram poller is already running. Keep that process; do not start another.") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     def update_peak_equity(self, current_equity: float) -> float:
         self.conn.execute("BEGIN IMMEDIATE")
@@ -574,6 +608,31 @@ def _proposal_message(
     ).astimezone().isoformat(timespec="seconds")
     brief = "; ".join(p.get("evidence", [])[:4])
 
+    if p.get("source") == "MANUAL":
+        review = p["risk_review"]
+        metrics = review["metrics"]
+        warnings = "\n".join("- " + text for text in review["warnings"][:6]) or "No additional rule-based warning."
+        return (
+            "DEMO — MANUAL TRADE APPROVAL REQUIRED\n"
+            f"Proposal: {row['proposal_id']}\nExpires: {expires}\n"
+            f"{p['symbol']} {p['direction']} MARKET; ISOLATED {p['leverage']}x\n"
+            f"Quantity: {qty:g}; exposure about {notional:.2f} USDT\n"
+            f"Estimated margin: {margin:.2f} USDT (fees extra)\n"
+            f"Pre-submit price range: {_fmt_price(entry - tolerance)}–{_fmt_price(entry + tolerance)} (market fills can slip)\n"
+            f"Stop: {_fmt_price(stop)}; target: {_fmt_price(target)}\n"
+            f"ATR-suggested stop/target: {p['suggested_stop']}/{p['suggested_target']}\n"
+            f"Estimated stop loss: {metrics['estimated_loss_at_stop']:.4f} USDT "
+            f"({metrics['loss_percent_of_margin']:.1f}% of initial margin)\n"
+            f"Estimated net target: {metrics['estimated_net_target_profit']:.4f} USDT\n"
+            f"1% adverse move before costs: {metrics['adverse_one_percent_loss_before_costs']:.4f} USDT\n"
+            f"Assessment: {review['recommendation']}\n{warnings}\n\n"
+            f"Approval overrides strategy entry gates for THIS request only. It authorizes "
+            f"setting this flat Demo symbol from {p['previous_leverage']:g}x to {p['leverage']}x, "
+            f"then restoring {p['restore_leverage']:g}x once flat and clear of orders. "
+            "It also covers the listed stop/target and an emergency reduce-only close if protection fails or the fill violates the approved range. "
+            "Stops can slip; liquidation price is not guaranteed or predicted. No live order."
+        )
+
     return (
         "DEMO — TRADE APPROVAL REQUIRED\n\n"
         f"Proposal: {row['proposal_id']}\n"
@@ -625,11 +684,148 @@ class DemoTelegramApprovalService:
         store: ApprovalStore | None = None,
         bot: TelegramBot | None = None,
     ):
+        self._reload_from_disk = trading_cfg is None
         self.trading_cfg = trading_cfg or load_config(CONFIG_PATH)
         self.telegram_cfg = telegram_cfg or load_telegram_config()
         self.store = store or ApprovalStore()
         self.bot = bot or TelegramBot(self.telegram_cfg)
         self.engine = TradingEngine(self.trading_cfg)
+
+    def _refresh_config(self) -> None:
+        if getattr(self, "_reload_from_disk", False):
+            self.trading_cfg = load_config(CONFIG_PATH)
+            self.engine.cfg = self.trading_cfg
+
+    def _notify(self, text: str) -> None:
+        # A Telegram outage MUST NOT interrupt order reconciliation/protection.
+        try:
+            self.bot.send(text)
+        except Exception:
+            try:
+                self.engine.journal.event("TELEGRAM_NOTIFICATION_FAILED", {"message": text})
+            except Exception:
+                pass  # Notification/audit failure cannot strand an unprotected fill.
+
+    def _manual_context(self, symbol: str, *, ignore_proposal: str | None = None):
+        state, exposure, margin, leverage = self._demo_state(symbol)
+        balances = demo_exchange.balance()
+        available = next((float(x.get("available_balance") or 0) for x in balances
+                          if x.get("asset") == "USDT"), 0.0)
+        blockers = []
+        if any(abs(float(p["position_amt"])) > 0 for p in demo_exchange.positions(symbol)):
+            blockers.append("An existing Demo position already occupies this symbol.")
+        if demo_exchange.open_orders(symbol) or demo_exchange.open_algo_orders(symbol):
+            blockers.append("Outstanding Demo orders exist for this symbol.")
+        if demo_exchange.position_mode().get("dualSidePosition") not in (False, "false"):
+            blockers.append("Manual execution currently requires one-way position mode.")
+        config = demo_exchange.symbol_config(symbol)
+        if config.get("is_auto_add_margin") in (True, "true"):
+            blockers.append("Automatic addition of isolated margin must be disabled for manual trades.")
+        for row in self.store.pending():
+            if row["proposal_id"] != ignore_proposal and row["payload"]["symbol"] == symbol:
+                blockers.append("Another pending or executing proposal occupies this symbol.")
+        return state, exposure, margin, leverage, available, blockers
+
+    def review_manual(self, request: ManualRequest) -> dict[str, Any]:
+        self._refresh_config()
+        request.validate()
+        state, exposure, margin, leverage, available, blockers = self._manual_context(request.symbol)
+        report = build_review(request, self.trading_cfg, state, market=DemoMarketData(),
+            available=available, actual_margin=margin, actual_leverage=leverage,
+            tolerance_bps=self.telegram_cfg.price_tolerance_bps, account_blockers=blockers)
+        ManualReviewStore(self.store.conn).save(report)
+        return report
+
+    def propose_manual(self, review_id: str) -> dict[str, Any]:
+        self._refresh_config()
+        report = ManualReviewStore(self.store.conn).get(review_id)
+        if not report["can_propose"]:
+            raise ValueError("Review blocked: " + "; ".join(report["blockers"]))
+        payload = report["payload"]
+        # Recheck the frozen review. Never silently replace it with a new size,
+        # side, stop or target after the voice discussion.
+        existing = self.store.conn.execute("SELECT proposal_id FROM telegram_trade_proposals WHERE signal_key=?",
+            ("DEMO:MANUAL:" + review_id,)).fetchone()
+        if existing:
+            row = self.store.get(existing[0])
+            if row["status"] != "PENDING":
+                raise ValueError("This review was already used. Obtain a new review for a new request.")
+        else:
+            row = {"payload": payload, "expires_at_ms": report["expires_at_ms"]}
+        check = self._revalidate_manual(row)
+        row = self.store.create(payload, expiry_seconds=self.telegram_cfg.approval_expiry_seconds)
+        self._deliver(row, exposure=check["exposure"], margin_mode="ISOLATED")
+        return self.store.get(row["proposal_id"])
+
+    def _revalidate_manual(self, row: dict[str, Any]) -> dict[str, Any]:
+        self._refresh_config()
+        p = row["payload"]
+        state, exposure, margin, leverage, available, errors = self._manual_context(
+            p["symbol"], ignore_proposal=row.get("proposal_id"))
+        if margin != "ISOLATED" or leverage != float(p["previous_leverage"]):
+            errors.append("Account margin/leverage changed since review; obtain a fresh review.")
+        market = DemoMarketData()
+        book = market.depth(p["symbol"], limit=20)
+        now = market.server_time_ms()
+        if now > min(int(row["expires_at_ms"]), int(p["expires_at"])):
+            errors.append("Manual review/approval expired.")
+        validate_book(book, now)
+        price = book.best_ask if p["direction"] == "LONG" else book.best_bid
+        if abs(price - p["entry_reference"]) / p["entry_reference"] * 10000 > p["approval_price_tolerance_bps"]:
+            errors.append("Price moved outside the reviewed tolerance; obtain a fresh review.")
+        if book.spread_bps > self.trading_cfg.strategy.max_spread_bps:
+            errors.append("Spread exceeds execution limit.")
+        fresh_errors, metrics = assess_fixed_trade(p, self.trading_cfg, state,
+            rules=market.symbol_rules(p["symbol"]), available=available,
+            funding=market.futures_context(p["symbol"]).last_funding_rate)
+        errors.extend(fresh_errors)
+        if metrics.get("estimated_loss_at_stop", 0) > p["estimated_loss_at_stop"] + 1e-8:
+            errors.append("Estimated loss exceeds the reviewed budget; obtain a fresh review.")
+        if errors:
+            raise ValueError("; ".join(dict.fromkeys(errors)))
+        return {"current_entry": price, "exposure": exposure, "margin_mode": margin,
+                "available_balance_checked": True, "manual_metrics": metrics}
+
+    def _deliver(self, row: dict[str, Any], *, exposure: float, margin_mode: str) -> None:
+        if row["status"] != "PENDING" or row.get("telegram_message_id"):
+            return
+        if row["expires_at_ms"] <= int(time.time() * 1000):
+            self.store.expire_due()
+            return
+        msg = self.bot.send(_proposal_message(row, exposure=exposure, margin_mode=margin_mode,
+            tolerance_bps=row["payload"].get("approval_price_tolerance_bps", self.telegram_cfg.price_tolerance_bps)),
+            keyboard=_keyboard(row["proposal_id"]))
+        self.store.set_message_id(row["proposal_id"], int(msg["message_id"]))
+
+    def restore_manual_leverage(self) -> None:
+        """Only restore the explicitly approved setting after confirmed flatness."""
+        with self.store.execution_lock():
+            rows = self.store.conn.execute("""SELECT r.* FROM manual_leverage_restores r
+                JOIN telegram_trade_proposals p USING(proposal_id)
+                WHERE r.status='NEEDED' AND p.status IN ('CLOSED','ORDER_FAILED','INVALIDATED')""").fetchall()
+            for row in rows:
+                try:
+                    symbol = row["symbol"]
+                    if any(abs(float(p["position_amt"])) > 0 for p in demo_exchange.positions(symbol)):
+                        continue
+                    if demo_exchange.open_orders(symbol) or demo_exchange.open_algo_orders(symbol):
+                        continue
+                    current = demo_exchange.symbol_config(symbol)["leverage"]
+                    if current not in (row["previous"], row["requested"]):
+                        # Do not overwrite a subsequent manual account change.
+                        status = "MANUAL_INTERVENTION"
+                    else:
+                        if current != row["previous"]:
+                            demo_exchange.change_leverage(symbol, row["previous"])
+                        if demo_exchange.symbol_config(symbol)["leverage"] != row["previous"]:
+                            raise RuntimeError("Restored leverage was not confirmed.")
+                        status = "RESTORED"
+                    self.store.conn.execute("UPDATE manual_leverage_restores SET status=? WHERE proposal_id=?",
+                        (status, row["proposal_id"]))
+                    self.store.conn.commit()
+                    self._notify(f"DEMO — {symbol} leverage restoration: {status}.")
+                except Exception as exc:
+                    self.engine.journal.event("MANUAL_LEVERAGE_RESTORE_RETRY", {"error_type": type(exc).__name__}, row["symbol"])
 
     def health(self) -> dict[str, Any]:
         symbols: dict[str, Any] = {}
@@ -653,6 +849,7 @@ class DemoTelegramApprovalService:
             "approval_expiry_seconds": self.telegram_cfg.approval_expiry_seconds,
             "price_tolerance_bps": self.telegram_cfg.price_tolerance_bps,
             "paused": self.trading_cfg.paused,
+            "manual_limits": asdict(self.trading_cfg.manual),
             "demo_api": demo_exchange.auth_health(),
             "symbols": symbols,
         }
@@ -710,6 +907,11 @@ class DemoTelegramApprovalService:
             peak_equity=peak_equity,
             state_certain=not unapproved_pending_entries,
         )
+        unresolved = self.store.conn.execute("""SELECT COUNT(*) FROM telegram_trade_proposals
+            WHERE status IN ('EXECUTING','EXECUTION_UNKNOWN','PROTECTION_EMERGENCY_FAILED')
+            AND proposal_id != ?""", (getattr(self, "_executing_proposal", ""),)).fetchone()[0]
+        if unresolved:
+            state.state_certain = False
         symbol_cfg = demo_exchange.symbol_config(symbol)
         margin_mode = str(symbol_cfg.get("margin_type") or "UNKNOWN").upper()
         actual_leverage = float(symbol_cfg.get("leverage") or 0)
@@ -718,12 +920,15 @@ class DemoTelegramApprovalService:
         return state, exposure, margin_mode, actual_leverage
 
     def create_and_send(self, symbol: str) -> dict[str, Any] | None:
+        self._refresh_config()
         if self.trading_cfg.paused:
             return None
         demo_state, exposure, margin_mode, actual_leverage = self._demo_state(symbol)
         if margin_mode != self.trading_cfg.margin_mode:
+            self.engine.journal.event("TELEGRAM_SCAN_SKIPPED", {"reason": "margin mode mismatch"}, symbol)
             return None
         if actual_leverage != float(self.trading_cfg.risk.max_leverage):
+            self.engine.journal.event("TELEGRAM_SCAN_SKIPPED", {"reason": "leverage mismatch"}, symbol)
             return None
         proposal = self.engine.proposal(
             symbol,
@@ -731,6 +936,7 @@ class DemoTelegramApprovalService:
             require_enabled=False,
         )
         if proposal.decision != "TRADE":
+            self.engine.journal.event("TELEGRAM_SCAN_WAIT", proposal.as_dict(), symbol)
             return None
         payload = proposal.as_dict()
         payload["approval_price_tolerance_bps"] = self.telegram_cfg.price_tolerance_bps
@@ -739,18 +945,9 @@ class DemoTelegramApprovalService:
             payload,
             expiry_seconds=self.telegram_cfg.approval_expiry_seconds,
         )
-        if not row.pop("_created", False):
+        if not row.pop("_created", False) and (row["status"] != "PENDING" or row.get("telegram_message_id")):
             return None
-        msg = self.bot.send(
-            _proposal_message(
-                row,
-                exposure=exposure,
-                margin_mode=margin_mode,
-                tolerance_bps=self.telegram_cfg.price_tolerance_bps,
-            ),
-            keyboard=_keyboard(row["proposal_id"]),
-        )
-        self.store.set_message_id(row["proposal_id"], int(msg["message_id"]))
+        self._deliver(row, exposure=exposure, margin_mode=margin_mode)
         return self.store.get(row["proposal_id"])
 
     @staticmethod
@@ -766,6 +963,9 @@ class DemoTelegramApprovalService:
         return True, ""
 
     def revalidate(self, row: dict[str, Any]) -> dict[str, Any]:
+        self._refresh_config()
+        if row["payload"].get("source") == "MANUAL":
+            return self._revalidate_manual(row)
         old = row["payload"]
         demo_state, exposure, margin_mode, actual_leverage = self._demo_state(old["symbol"])
 
@@ -837,17 +1037,33 @@ class DemoTelegramApprovalService:
         return latest
 
     def execute_approved(self, proposal_id: str) -> dict[str, Any]:
+        with self.store.execution_lock():
+            self._executing_proposal = proposal_id
+            try:
+                return self._execute_approved(proposal_id)
+            finally:
+                self._executing_proposal = ""
+
+    def _execute_approved(self, proposal_id: str) -> dict[str, Any]:
         row = self.store.claim_for_execution(proposal_id)
         p = row["payload"]
         try:
             check = self.revalidate(row)
+            if p.get("source") == "MANUAL" and p["previous_leverage"] != p["leverage"]:
+                self.store.conn.execute("""INSERT OR IGNORE INTO manual_leverage_restores
+                    (proposal_id,symbol,previous,requested) VALUES(?,?,?,?)""",
+                    (proposal_id, p["symbol"], int(p["previous_leverage"]), int(p["leverage"])))
+                self.store.conn.commit()
+                demo_exchange.change_approved_leverage(proposal_id, p["symbol"], int(p["leverage"]))
+                if demo_exchange.symbol_config(p["symbol"])["leverage"] != p["leverage"]:
+                    raise RuntimeError("Demo leverage change was not confirmed. No entry submitted.")
         except Exception as exc:
             self.store.mark(
                 proposal_id,
                 "INVALIDATED",
                 reason=str(exc),
             )
-            self.bot.send(
+            self._notify(
                 f"DEMO — Proposal {proposal_id} invalidated. No order submitted.\n{exc}"
             )
             return {"status": "INVALIDATED", "reason": str(exc)}
@@ -876,7 +1092,7 @@ class DemoTelegramApprovalService:
                 reason=str(exc),
                 client_id=client_id,
             )
-            self.bot.send(
+            self._notify(
                 f"DEMO — Execution state UNKNOWN for proposal {proposal_id}. "
                 "No automatic retry will occur. Reconcile the client order ID "
                 "before any new entry."
@@ -884,12 +1100,22 @@ class DemoTelegramApprovalService:
             raise
         response = result.get("response") or {}
         order_id = str(response.get("orderId") or "")
-        self.bot.send(
+        self._notify(
             f"DEMO — Order accepted for {p['symbol']}. "
             f"Binance order ID: {order_id or 'pending-query'}."
         )
 
-        actual = self._confirm_order(p["symbol"], client_id)
+        try:
+            actual = self._confirm_order(p["symbol"], client_id)
+            if str(actual.get("status")) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
+                raise RuntimeError("Entry has not reached a confirmed terminal state.")
+        except Exception:
+            self.store.mark(proposal_id, "EXECUTION_UNKNOWN",
+                            reason="Order confirmation failed; reconcile before new entries.",
+                            order_id=order_id, client_id=client_id)
+            self._notify(f"DEMO — CRITICAL: entry confirmation uncertain for {p['symbol']}. "
+                         f"Inspect Demo orders/positions immediately. Client ID: {client_id}. New entries blocked.")
+            raise
         status = str(actual.get("status") or "UNKNOWN")
         executed_qty = float(actual.get("executedQty") or 0)
         avg_price = float(actual.get("avgPrice") or 0)
@@ -900,13 +1126,13 @@ class DemoTelegramApprovalService:
                 if executed_qty + 1e-12 < original_qty
                 else "FULL FILL"
             )
-            self.bot.send(
+            self._notify(
                 f"DEMO — {fill_label}: {p['symbol']} actual quantity "
                 f"{executed_qty}, average price {_fmt_price(avg_price)}. "
                 f"Final order status: {status}."
             )
         else:
-            self.bot.send(
+            self._notify(
                 f"DEMO — Order status for {p['symbol']}: {status}; "
                 "no fill has been reported yet."
             )
@@ -927,7 +1153,7 @@ class DemoTelegramApprovalService:
                 order_id=order_id,
                 client_id=client_id,
             )
-            self.bot.send(
+            self._notify(
                 f"DEMO — Entry did not fill for {p['symbol']}. "
                 f"Final order status: {status}."
             )
@@ -936,6 +1162,10 @@ class DemoTelegramApprovalService:
         protection: dict[str, Any] = {}
         if executed_qty > 0:
             try:
+                if p.get("source") == "MANUAL":
+                    tolerance = p["approval_price_tolerance_bps"] / 10000
+                    if not p["entry_reference"] * (1-tolerance) <= avg_price <= p["entry_reference"] * (1+tolerance):
+                        raise RuntimeError("Actual fill is outside the reviewed price range.")
                 protection = demo_exchange.place_protection(
                     p["symbol"],
                     direction=p["direction"],
@@ -944,13 +1174,13 @@ class DemoTelegramApprovalService:
                     take_profit=float(p["take_profit"]),
                     proposal_id=proposal_id,
                 )
-                self.bot.send(
+                self._notify(
                     f"DEMO — Protective orders confirmed for {p['symbol']}: "
                     f"stop {_fmt_price(float(p['stop_loss']))}, "
                     f"target {_fmt_price(float(p['take_profit']))}."
                 )
             except Exception as exc:
-                self.bot.send(
+                self._notify(
                     f"DEMO — PROTECTION FAILURE for {p['symbol']}: {exc}. "
                     "Emergency policy: submit a reduce-only market close now."
                 )
@@ -959,8 +1189,10 @@ class DemoTelegramApprovalService:
                     protection = {
                         "protection_error": str(exc),
                         "emergency_close": emergency,
+                        **demo_exchange.protection_ids(p["symbol"], proposal_id),
+                        "algo": True,
                     }
-                    self.bot.send(
+                    self._notify(
                         f"DEMO — Emergency reduce-only close submitted for "
                         f"{p['symbol']} after protection failure."
                     )
@@ -983,7 +1215,7 @@ class DemoTelegramApprovalService:
                         order_id=order_id,
                         client_id=client_id,
                     )
-                    self.bot.send(
+                    self._notify(
                         f"DEMO — CRITICAL: emergency close also failed for "
                         f"{p['symbol']}. Manual Demo-account intervention is required."
                     )
@@ -1008,6 +1240,10 @@ class DemoTelegramApprovalService:
         return final
 
     def reconcile_executed(self) -> None:
+        with self.store.execution_lock():
+            self._reconcile_executed()
+
+    def _reconcile_executed(self) -> None:
         for row in self.store.executed_open_candidates():
             p = row["payload"]
             result = row.get("result") or {}
@@ -1026,7 +1262,8 @@ class DemoTelegramApprovalService:
                 cid = protection.get(key)
                 if cid:
                     try:
-                        demo_exchange.cancel_order(p["symbol"], client_id=cid)
+                        demo_exchange.cancel_protection(p["symbol"], client_id=cid,
+                                                       algo=bool(protection.get("algo", False)))
                     except Exception:
                         pass
 
@@ -1049,7 +1286,7 @@ class DemoTelegramApprovalService:
                     },
                 },
             )
-            self.bot.send(
+            self._notify(
                 f"DEMO — Position closed for {p['symbol']}. "
                 f"Realized P&L: {realized:.4f}; commissions: {commissions:.4f}."
             )
@@ -1089,7 +1326,10 @@ class DemoTelegramApprovalService:
         if not ok:
             self.bot.answer_callback(callback_id, state, alert=True)
             return
-        self.bot.answer_callback(callback_id, state)
+        try:
+            self.bot.answer_callback(callback_id, state)
+        except Exception:
+            pass  # The authorized decision was persisted; acknowledgement is advisory.
         if state == "REJECTED":
             self.bot.send(f"DEMO — Proposal {proposal_id} rejected. No order submitted.")
             return
@@ -1107,7 +1347,11 @@ class DemoTelegramApprovalService:
     def handle_message(self, message: dict[str, Any]) -> None:
         if not self._authorized_message(message):
             return
-        text = str(message.get("text") or "").strip().split()[0].lower()
+        self._refresh_config()
+        parts = str(message.get("text") or "").strip().split()
+        if not parts:
+            return
+        text = parts[0].lower()
         if text == "/status":
             health = demo_exchange.auth_health()
             pending = len(self.store.pending())
@@ -1157,11 +1401,21 @@ class DemoTelegramApprovalService:
             finally:
                 self.store.set_offset(update_id)
         self.reconcile_executed()
+        self.restore_manual_leverage()
         return len(updates)
 
     def propose_scan(self) -> list[str]:
+        self._refresh_config()
         if self.trading_cfg.paused:
             return []
+        # Retry delivery of the SAME unexpired approval, not a new trade.
+        for row in self.store.pending():
+            if row["status"] == "PENDING" and not row.get("telegram_message_id"):
+                try:
+                    self._deliver(row, exposure=self._demo_state(row["payload"]["symbol"])[1],
+                                  margin_mode=row["payload"].get("margin_mode", "ISOLATED"))
+                except Exception as exc:
+                    self.engine.journal.event("TELEGRAM_DELIVERY_RETRY", {"error_type": type(exc).__name__})
         existing = {
             r["payload"]["symbol"]
             for r in self.store.pending()
@@ -1171,7 +1425,12 @@ class DemoTelegramApprovalService:
         for symbol in self.trading_cfg.permitted_symbols:
             if symbol in existing:
                 continue
-            row = self.create_and_send(symbol)
-            if row:
-                created.append(row["proposal_id"])
+            try:
+                row = self.create_and_send(symbol)
+                if row and row["status"] == "PENDING" and row.get("telegram_message_id"):
+                    created.append(row["proposal_id"])
+            except Exception as exc:
+                # One symbol's failure must not starve Telegram approvals or
+                # the other symbol. Record failure without credential-bearing URLs.
+                self.engine.journal.event("TELEGRAM_SCAN_ERROR", {"error_type": type(exc).__name__}, symbol)
         return created

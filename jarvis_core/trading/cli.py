@@ -7,7 +7,8 @@ import json
 import sys
 import time
 
-from .config import CONFIG_PATH, initialize_paper_config, load_config
+from .config import CONFIG_PATH, initialize_paper_config, load_config, write_config
+from .manual import ManualRequest
 from .engine import TradingEngine
 from .journal import TradingJournal
 from . import demo_exchange
@@ -259,13 +260,19 @@ def cmd_telegram_propose(args) -> int:
 
 def cmd_telegram_poll(_args) -> int:
     service = DemoTelegramApprovalService()
-    count = service.poll_once()
+    with service.store.poller_lock():
+        count = service.poll_once()
     print(f"Processed {count} Telegram update(s).")
     return 0
 
 
 def cmd_telegram_loop(args) -> int:
     service = DemoTelegramApprovalService()
+    with service.store.poller_lock():
+        return _telegram_loop(service, args)
+
+
+def _telegram_loop(service, args) -> int:
     scan_every = max(15, int(args.scan_seconds))
     next_scan = 0.0
     consecutive_errors = 0
@@ -306,6 +313,37 @@ def cmd_telegram_pending(_args) -> int:
     return 0
 
 
+def cmd_manual_config(args) -> int:
+    cfg = load_config()
+    if args.enable:
+        if args.max_leverage is None or args.max_margin is None:
+            raise ValueError("Enabling manual Demo proposals requires --max-leverage and --max-margin.")
+        cfg.manual.max_leverage = args.max_leverage
+        cfg.manual.max_margin_quote = args.max_margin
+    cfg.manual.enabled = bool(args.enable)
+    cfg.validate()
+    write_config(cfg)
+    _json({"environment": "DEMO", "manual": vars(cfg.manual),
+           "strategy_leverage_unchanged": cfg.risk.max_leverage})
+    return 0
+
+
+def cmd_manual_review(args) -> int:
+    request = ManualRequest(symbol=args.symbol.upper(), direction=args.direction,
+        leverage=args.leverage, margin_quote=args.margin, notional_quote=args.notional,
+        stop_loss=args.stop, take_profit=args.target)
+    _json(DemoTelegramApprovalService().review_manual(request))
+    return 0
+
+
+def cmd_manual_propose(args) -> int:
+    row = DemoTelegramApprovalService().propose_manual(args.review_id)
+    _json({"environment": "DEMO", "proposal_id": row["proposal_id"],
+           "status": row["status"], "telegram_message_id": row["telegram_message_id"],
+           "execution": "Requires authorized Telegram approval and running telegram-loop."})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jarvis-trader",
@@ -315,6 +353,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", help="Override trading config path.")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("manual-config", help="Explicit local limits for manual Demo proposals.")
+    mode = s.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--enable", action="store_true")
+    mode.add_argument("--disable", action="store_true")
+    s.add_argument("--max-leverage", type=int)
+    s.add_argument("--max-margin", type=float)
+    s.set_defaults(func=cmd_manual_config)
+
+    s = sub.add_parser("manual-review", help="Review a user-directed Demo trade; sends no message or order.")
+    s.add_argument("symbol")
+    s.add_argument("direction", choices=["LONG", "SHORT"])
+    amount = s.add_mutually_exclusive_group(required=True)
+    amount.add_argument("--margin", type=float, help="Maximum initial margin in USDT, fees extra.")
+    amount.add_argument("--notional", type=float, help="Maximum total position exposure in USDT.")
+    s.add_argument("--leverage", type=int, required=True)
+    s.add_argument("--stop", type=float)
+    s.add_argument("--target", type=float)
+    s.set_defaults(func=cmd_manual_review)
+
+    s = sub.add_parser("manual-propose", help="Send an unchanged, reviewed manual trade for Telegram approval.")
+    s.add_argument("review_id")
+    s.set_defaults(func=cmd_manual_propose)
 
     s = sub.add_parser("init")
     s.add_argument("--capital", type=float, required=True)

@@ -30,7 +30,7 @@ _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 _MIN_CLAUSE_CHARS = 42
 _MAX_VOICE_CHARS = 110
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
-CAPABILITY_REVISION = 6
+CAPABILITY_REVISION = 7
 
 
 def _agent_bootstrap() -> str:

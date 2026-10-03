@@ -1,5 +1,9 @@
 # Jarvis Trading Engine
 
+For the current exchange capabilities, see **Telegram approval gate** and
+**Manual Demo trade review** below. The early PAPER-phase sections describe
+that phase's scope; exchange execution is now available on Demo only.
+
 This is the deterministic trading-systems layer for Jarvis. It is intentionally
 separate from the low-latency voice brain.
 
@@ -468,3 +472,90 @@ validation, and reduce-only emergency closing remains available.
 
 This phase intentionally does not contain a production/live Binance order
 endpoint or a live-mode switch.
+
+## Manual Demo trade review
+
+Manual entries are a separate source (`MANUAL` / `manual-v1`). They originate
+from explicit user intent, so a baseline `WAIT` is an advisory warning rather
+than an entry prohibition. Hard risk/account checks remain mandatory. No
+win probability, liquidation price or profitability claim is inferred from
+the number of passing indicator gates.
+
+Commands:
+
+```bash
+jarvis-trader manual-config --enable --max-leverage 10 --max-margin 10
+jarvis-trader manual-review BTCUSDT LONG --margin 10 --leverage 10
+jarvis-trader manual-review ETHUSDT SHORT --notional 100 --leverage 2 --stop PRICE --target PRICE
+jarvis-trader manual-propose REVIEW_ID
+jarvis-trader manual-config --disable
+```
+
+`PRICE` and `REVIEW_ID` are placeholders, not executable defaults. Configuration
+is a local opt-in; the voice agent must obtain explicit authorization for limit
+changes. Existing configuration files load with manual submissions disabled.
+Automatic strategy parameters and the PAPER enabled flag are not changed.
+
+The review reads authenticated Demo account state and Demo market data, then
+stores an immutable five-minute snapshot in `manual_trade_reviews` in the
+existing SQLite journal. It sends nothing and changes no Binance settings.
+It reports requested amount semantics, executable rounded quantity, stop and
+target, conservative cost estimates, stop loss as a percentage of margin,
+net reward/risk, and hypothetical adverse 1%/3% moves before costs. It includes
+the baseline's assessment, warnings, alternatives, and explicit blockers.
+
+If omitted, stop and target are suggested using the latest completed 15m
+candle, the configured ATR buffer, and configured gross reward/risk. They are
+rounded to the Demo tick size and labelled as suggestions. The user reviews
+these exact levels. They are not optimized or backtested exits.
+
+Quantity is rounded down from the requested maximum notional at the high end
+of the allowed entry-price interval. Validation checks both interval ends,
+fees/slippage/funding estimates, available margin, the separate manual limits,
+and shared portfolio loss/exposure limits. An amount too small for exchange
+minimums is rejected rather than silently increased. A smaller alternative
+requires a fresh review; the original request is never silently resized.
+
+`manual-propose` rechecks the stored review against fresh account state,
+prices, symbol filters and current limits, then sends it with Approve/Reject
+buttons. The risk warning remains visible even if the user chooses to proceed
+against the baseline's advice. Changes beyond its reviewed price/risk bounds
+invalidate the review. A spoken yes only authorizes sending the proposal;
+it never substitutes for the Telegram execution approval.
+
+Execution uses the same atomic, single-use approval gate as strategy trades.
+Only one execution/reconciliation operation can hold the account execution
+lock. A separate poller lock prevents concurrent updated Telegram loops.
+Pausing applies to both entry sources. A manual pending proposal reserves its
+symbol from scanner proposals; actual manual positions count in shared account
+exposure. Errors on one scan symbol no longer prevent processing the other.
+
+The initial manual implementation requires an already-ISOLATED symbol,
+one-way position mode, automatic margin addition disabled, and no position or
+outstanding ordinary/algo order for that symbol. The Telegram message explicitly
+authorizes any temporary leverage change after approval. Once flat and clear
+of orders, the loop restores the prior leverage so that a higher-leverage
+manual trade does not permanently prevent the baseline scanner using its
+original setting. A subsequent external leverage change is not overwritten.
+If restoration cannot complete, inspect events and account settings.
+
+Stop and target use the current Demo `/fapi/v1/algoOrder` API with reduce-only
+conditional orders. Cleanup tracks algo IDs separately from older ordinary
+protective orders. Notification delivery failures do not interrupt fill
+confirmation, protective placement or emergency close handling. A failed
+approval-message send can retry the same unexpired proposal; even if Telegram
+delivers duplicate messages after a timeout, approval and execution remain
+single-use. Order outcomes that remain unknown block further entries and
+require reconciliation before resuming.
+
+The shown entry interval is a **pre-submission check**, not a guaranteed market
+fill price. A manual fill outside the interval triggers the disclosed emergency
+close policy; that close can also slip or fail. Fees are estimates; exact
+liquidation depends on exchange calculations. This does not make risky trades
+safe, nor does journaling train the model automatically.
+
+Diagnostics: `jarvis-trader telegram-health`, `telegram-pending`, and
+`events --limit 50`. WAIT reasons, setting mismatches, scan errors and delivery
+failures are recorded without printing credentials. All new tests use local
+fakes/mocks; exchange-account acceptance and spoken command recognition still
+need verification on the installed T14. No real-money execution was added.
