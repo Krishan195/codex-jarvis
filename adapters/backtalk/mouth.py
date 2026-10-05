@@ -542,9 +542,19 @@ class Mouth:
         previous sentence had completely finished playing. On a CPU TTS
         engine that creates an audible 1–3 second hole between chunks.
         This worker lets synthesis overlap playback instead.
+
+        Kokoro is noticeably heavier than Piper on CPU-only laptops. Voice
+        deltas can therefore arrive as several tiny sentence/clause jobs that
+        each pay the Kokoro inference startup cost. Briefly coalesce adjacent
+        plain-speech jobs into one natural chunk before synthesis. This adds
+        only a tiny buffering delay while substantially reducing inter-sentence
+        gaps. Direction-bearing chunks stay separate so visual cues remain
+        aligned with the words that triggered them.
         """
+        pending = None
         while True:
-            item = self._q.get()
+            item = pending if pending is not None else self._q.get()
+            pending = None
             if len(item) == 3:
                 sentence, directions, generation = item
             else:  # compatibility with any older queued item
@@ -552,6 +562,43 @@ class Mouth:
                 generation = self._current_generation()
             if not sentence or generation != self._current_generation():
                 continue
+
+            # Kokoro benefits from fewer, fuller inference jobs. Give the brain
+            # a very short window to deliver the next clause/sentence and join
+            # plain speech up to a comfortable TTS chunk size.
+            if directions is None:
+                parts = [sentence.strip()]
+                deadline = time.monotonic() + 0.09
+                while len(" ".join(parts)) < 280:
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        break
+                    try:
+                        nxt = self._q.get(timeout=timeout)
+                    except queue.Empty:
+                        break
+
+                    if len(nxt) == 3:
+                        ntext, ndirections, ngeneration = nxt
+                    else:
+                        ntext, ndirections = (
+                            nxt if isinstance(nxt, tuple) else (nxt, None)
+                        )
+                        ngeneration = self._current_generation()
+
+                    if ngeneration != generation or ndirections is not None:
+                        pending = nxt
+                        break
+
+                    candidate = (str(ntext) or "").strip()
+                    if not candidate:
+                        continue
+                    if len(" ".join(parts + [candidate])) > 320:
+                        pending = nxt
+                        break
+                    parts.append(candidate)
+
+                sentence = " ".join(parts)
 
             self._synthing.set()
             t0 = time.monotonic()
