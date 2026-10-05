@@ -124,6 +124,24 @@ def assess_fixed_trade(payload: dict[str, Any], cfg: TradingConfig, state: Accou
     if not math.isfinite(tolerance) or not 0 < tolerance <= .01:
         return ["Invalid price tolerance."], {}
     low, high = entry * (1 - tolerance), entry * (1 + tolerance)
+
+    # Explain the actual Demo exchange floor in terms Boss can act on.
+    # Use the whole approved price range so a proposal that is valid at review
+    # time cannot become too small merely because price moves within tolerance.
+    required_qty = max(float(rules["min_qty"]), 0.0)
+    if rules["min_notional"] > 0:
+        required_qty = max(required_qty, float(rules["min_notional"]) / low)
+    required_qty = math.ceil(required_qty / rules["step_size"] - 1e-12) * rules["step_size"]
+    required_notional_limit = required_qty * high
+    minimum_margin_required = required_notional_limit / req.leverage
+
+    if qty + max(1e-12, rules["step_size"] * 1e-7) < required_qty:
+        errors.append(
+            f"Requested size is below the Demo exchange minimum. "
+            f"At {req.leverage}x, allow at least {minimum_margin_required:.2f} USDT margin "
+            f"({required_notional_limit:.2f} USDT notional; quantity {required_qty:g})."
+        )
+
     if not cfg.manual.enabled:
         errors.append("Manual Demo proposals are disabled; explicitly configure manual limits first.")
     if cfg.market_type != "futures" or cfg.margin_mode != "ISOLATED":
@@ -161,7 +179,15 @@ def assess_fixed_trade(payload: dict[str, Any], cfg: TradingConfig, state: Accou
         checked = apply_risk(proposal, risk_cfg, state, require_enabled=False,
             fixed_quantity=qty, funding_rate=funding,
             **{key: rules[key] for key in ("step_size", "tick_size", "min_qty", "max_qty", "min_notional")})
-        errors.extend(checked.risk_rejections)
+        # Exchange minimums are reported once above with the actionable
+        # minimum margin/notional instead of leaking generic risk-engine text.
+        for rejection in checked.risk_rejections:
+            if rejection in {
+                "risk-sized quantity is below exchange minimum",
+                "risk-sized notional is below exchange minimum",
+            }:
+                continue
+            errors.append(rejection)
         checks.append(checked)
     worst = max(checks, key=lambda p: p.estimated_loss_at_stop)
     costs = (high + max(stop, target)) * qty * (cfg.costs.taker_fee_bps + cfg.costs.slippage_bps) / 10000
@@ -191,6 +217,9 @@ def assess_fixed_trade(payload: dict[str, Any], cfg: TradingConfig, state: Accou
         "estimated_exit_fee": worst.estimated_exit_fee,
         "estimated_slippage": worst.estimated_slippage,
         "estimated_funding": worst.estimated_funding,
+        "exchange_minimum_notional_quote": rules["min_notional"],
+        "minimum_quantity_required": required_qty,
+        "minimum_margin_required_quote": minimum_margin_required,
     }
     return list(dict.fromkeys(errors)), metrics
 
@@ -256,9 +285,12 @@ def build_review(request: ManualRequest, cfg: TradingConfig, state: AccountState
         errors.append("Demo account must already use ISOLATED margin; review will not change margin mode.")
     if not math.isfinite(actual_leverage) or not 1 <= actual_leverage <= 125 or int(actual_leverage) != actual_leverage:
         errors.append("Demo account leverage could not be verified.")
-    if book.spread_bps > cfg.strategy.max_spread_bps:
-        errors.append("Current spread exceeds the execution liquidity limit.")
     warnings = []
+    if book.spread_bps > cfg.strategy.max_spread_bps:
+        warnings.append(
+            f"Current spread {book.spread_bps:.2f} bps exceeds the strategy liquidity preference "
+            f"of {cfg.strategy.max_spread_bps:.2f} bps; manual Demo mode treats this as a warning."
+        )
     agrees = baseline.decision == "TRADE" and baseline.direction == request.direction
     if not agrees:
         warnings.append(f"Baseline strategy does not endorse this {request.direction}: {baseline.decision} {baseline.direction or ''}.".strip())
