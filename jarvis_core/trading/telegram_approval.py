@@ -778,6 +778,18 @@ class DemoTelegramApprovalService:
         fresh_errors, metrics = assess_fixed_trade(p, self.trading_cfg, state,
             rules=market.symbol_rules(p["symbol"]), available=available,
             funding=market.futures_context(p["symbol"]).last_funding_rate)
+
+        # Manual Demo commander mode intentionally treats execution spread /
+        # liquidity preference as advisory. The review already disclosed those
+        # conditions to Boss before Telegram approval. Do not let a generic
+        # downstream risk message silently re-promote the same condition into a
+        # hard blocker after Boss presses Approve. All other account, exchange,
+        # sizing, geometry, balance, expiry and price-tolerance failures remain
+        # fail-closed.
+        fresh_errors = [
+            msg for msg in fresh_errors
+            if "spread" not in msg.lower() and "liquidity" not in msg.lower()
+        ]
         errors.extend(fresh_errors)
         if metrics.get("estimated_loss_at_stop", 0) > p["estimated_loss_at_stop"] + 1e-8:
             errors.append("Estimated loss exceeds the reviewed budget; obtain a fresh review.")
