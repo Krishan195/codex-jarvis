@@ -1,11 +1,12 @@
 """Transparent baseline strategy: trend-pullback-v1.
 
 Hypothesis:
-Trade only in the direction of aligned 1h/4h trends, then enter when a
-completed 15m candle reclaims the fast EMA after a pullback. Momentum,
-volatility, volume, liquidity and order-book conditions are gates, not votes.
+Trade only in the direction of aligned 1h/4h trends with a fresh signal.
+Use a transparent confirmation score for the 15m setup so one weak indicator
+does not veto an otherwise coherent trade. Spread remains advisory here;
+portfolio/account/exchange risk checks still run separately.
 
-No confidence/win-probability score is produced. WAIT is normal.
+No confidence/win-probability score is produced. WAIT remains normal.
 """
 from __future__ import annotations
 
@@ -118,12 +119,37 @@ def generate_proposal(
         (server_time_ms <= expires_at, "signal has not expired"),
     ]
 
-    long_ok = all(ok for ok, _ in long_checks)
-    short_ok = all(ok for ok, _ in short_checks)
+    # Autonomous strategy v2:
+    # - 1h and 4h trend alignment is mandatory.
+    # - Signal freshness is mandatory.
+    # - Six 15m confirmations are scored; at least the configured threshold
+    #   must pass. One weak indicator no longer forces WAIT.
+    # - Spread is advisory at strategy level. Execution/risk validation remains
+    #   responsible for genuine account/exchange failures.
+    long_confirmations = long_checks[2:7] + [long_checks[8]]
+    short_confirmations = short_checks[2:7] + [short_checks[8]]
+    long_score = sum(1 for ok, _ in long_confirmations if ok)
+    short_score = sum(1 for ok, _ in short_confirmations if ok)
 
-    if h1["ema_fast"] > h1["ema_slow"] and h4["ema_fast"] > h4["ema_slow"]:
+    long_trend_ok = long_checks[0][0] and long_checks[1][0]
+    short_trend_ok = short_checks[0][0] and short_checks[1][0]
+    long_fresh = long_checks[9][0]
+    short_fresh = short_checks[9][0]
+
+    long_ok = (
+        long_trend_ok
+        and long_fresh
+        and long_score >= cfg.min_confirmation_score
+    )
+    short_ok = (
+        short_trend_ok
+        and short_fresh
+        and short_score >= cfg.min_confirmation_score
+    )
+
+    if long_trend_ok:
         regime = "trend-up"
-    elif h1["ema_fast"] < h1["ema_slow"] and h4["ema_fast"] < h4["ema_slow"]:
+    elif short_trend_ok:
         regime = "trend-down"
     else:
         regime = "mixed"
@@ -157,6 +183,18 @@ def generate_proposal(
 
     evidence = [text for ok, text in checks if ok]
     failures = [f"FAILED condition: {text}" for ok, text in checks if not ok]
+    selected_score = (
+        long_score if checks is long_checks else short_score
+    )
+    evidence.append(
+        f"15m confirmation score={selected_score}/6 "
+        f"(minimum {cfg.min_confirmation_score})"
+    )
+    if book.spread_bps > cfg.max_spread_bps:
+        evidence.append(
+            f"WARNING: spread {book.spread_bps:.3f} bps exceeds preferred "
+            f"{cfg.max_spread_bps:.3f} bps but is advisory for strategy qualification"
+        )
     evidence.extend(
         [
             f"15m RSI={s['rsi']:.2f}",
