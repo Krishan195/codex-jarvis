@@ -252,18 +252,40 @@ def build_review(request: ManualRequest, cfg: TradingConfig, state: AccountState
     atr = atr_wilder(signal, cfg.strategy.atr_period)[-1]
     if not math.isfinite(atr) or atr <= 0:
         raise MarketDataError("No valid ATR for a manual review.")
+
+    tolerance = tolerance_bps / 10000
+    approval_low = entry * (1 - tolerance)
+    approval_high = entry * (1 + tolerance)
+    tick = rules["tick_size"]
+    exit_buffer = max(.25 * atr, 2 * tick)
+
     if request.stop_loss is None:
-        stop = (min(signal[-1].low - cfg.strategy.stop_atr_buffer * atr, entry - .25 * atr)
-                if request.direction == "LONG" else
-                max(signal[-1].high + cfg.strategy.stop_atr_buffer * atr, entry + .25 * atr))
+        stop = (
+            min(
+                signal[-1].low - cfg.strategy.stop_atr_buffer * atr,
+                approval_low - exit_buffer,
+            )
+            if request.direction == "LONG"
+            else max(
+                signal[-1].high + cfg.strategy.stop_atr_buffer * atr,
+                approval_high + exit_buffer,
+            )
+        )
     else:
         stop = request.stop_loss
-    stop = _round_nearest(stop, rules["tick_size"])
+    stop = _round_nearest(stop, tick)
+
     target = request.take_profit
     if target is None:
-        target = entry + (1 if request.direction == "LONG" else -1) * cfg.strategy.reward_risk * abs(entry - stop)
-    target = _round_nearest(target, rules["tick_size"])
-    maximum_price = entry * (1 + tolerance_bps / 10000)
+        if request.direction == "LONG":
+            risk_distance = approval_high - stop
+            target = approval_high + cfg.strategy.reward_risk * risk_distance
+        else:
+            risk_distance = stop - approval_low
+            target = approval_low - cfg.strategy.reward_risk * risk_distance
+    target = _round_nearest(target, tick)
+
+    maximum_price = approval_high
     qty = _round_down(request.notional_limit / maximum_price, rules["step_size"])
     review_id = secrets.token_hex(8)
     payload = TradeProposal(decision="TRADE", symbol=request.symbol,
