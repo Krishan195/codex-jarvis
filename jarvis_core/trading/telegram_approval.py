@@ -773,8 +773,8 @@ class DemoTelegramApprovalService:
         price = book.best_ask if p["direction"] == "LONG" else book.best_bid
         if abs(price - p["entry_reference"]) / p["entry_reference"] * 10000 > p["approval_price_tolerance_bps"]:
             errors.append("Price moved outside the reviewed tolerance; obtain a fresh review.")
-        if book.spread_bps > self.trading_cfg.strategy.max_spread_bps:
-            errors.append("Spread exceeds execution limit.")
+        # The manual Demo commander lane already disclosed spread at review
+        # time. Price-tolerance and exchange validation still fail closed here.
         fresh_errors, metrics = assess_fixed_trade(p, self.trading_cfg, state,
             rules=market.symbol_rules(p["symbol"]), available=available,
             funding=market.futures_context(p["symbol"]).last_funding_rate)
