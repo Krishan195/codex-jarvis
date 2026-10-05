@@ -126,7 +126,7 @@ python3 "$ROOT/setup.py"
 
 
 
-say "Preparing low-latency Piper voice..."
+say "Preparing low-latency natural Piper voice..."
 python3 - "$HOME_DIR/backtalk/models" <<'PY'
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -136,10 +136,10 @@ dest = Path(sys.argv[1])
 dest.mkdir(parents=True, exist_ok=True)
 
 assets = {
-    "en_GB-alan-medium.onnx":
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx?download=true",
-    "en_GB-alan-medium.onnx.json":
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json?download=true",
+    "en_US-hfc_male-medium.onnx":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx?download=true",
+    "en_US-hfc_male-medium.onnx.json":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json?download=true",
 }
 
 for name, url in assets.items():
