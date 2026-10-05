@@ -69,7 +69,7 @@ _pipe_lock = threading.Lock()
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 _ONNX_MODEL = _MODEL_DIR / "kokoro-v1.0.v1.1.onnx"
 _ONNX_VOICES = _MODEL_DIR / "voices-v1.0.v1.1.bin"
-_PIPER_MODEL = _MODEL_DIR / "en_GB-alan-medium.onnx"
+_PIPER_MODEL = _MODEL_DIR / f"{CFG.get('piper_voice') or 'en_US-hfc_male-medium'}.onnx"
 
 
 def _ensure_espeak():
@@ -566,7 +566,7 @@ class Mouth:
             # Kokoro benefits from fewer, fuller inference jobs. Give the brain
             # a very short window to deliver the next clause/sentence and join
             # plain speech up to a comfortable TTS chunk size.
-            if directions is None:
+            if directions is None and str(CFG.get("tts_backend") or "piper").lower() != "piper":
                 parts = [sentence.strip()]
                 deadline = time.monotonic() + 0.09
                 while len(" ".join(parts)) < 280:
