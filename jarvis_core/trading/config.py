@@ -29,6 +29,7 @@ class StrategyConfig:
     min_volume_ratio: float = 1.00
     max_spread_bps: float = 5.0
     max_adverse_book_imbalance: float = 0.25
+    min_confirmation_score: int = 4
     stop_atr_buffer: float = 0.50
     reward_risk: float = 2.0
     signal_expiry_minutes: int = 15
@@ -109,6 +110,8 @@ class TradingConfig:
             raise ValueError("Baseline v1 currently expects 1h and 4h context.")
         if self.strategy.reward_risk <= 0:
             raise ValueError("reward_risk must be positive.")
+        if not 1 <= self.strategy.min_confirmation_score <= 6:
+            raise ValueError("min_confirmation_score must be between 1 and 6.")
 
 
 def _construct(data: dict[str, Any]) -> TradingConfig:
