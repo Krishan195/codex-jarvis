@@ -55,9 +55,10 @@ class RiskConfig:
 @dataclass
 class ManualTradingConfig:
     # Independent of the strategy's leverage setting. Explicit local opt-in.
+    # Defaults are usable with BTC/ETH Demo minimum notionals while remaining opt-in.
     enabled: bool = False
-    max_leverage: int = 2
-    max_margin_quote: float = 10.0
+    max_leverage: int = 10
+    max_margin_quote: float = 50.0
 
 
 @dataclass
