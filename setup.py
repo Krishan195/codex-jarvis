@@ -27,7 +27,7 @@ defaults = {
     "name": "Jarvis",
     "ptt_key": "home",
     "voice": "bm_lewis",
-    "tts_backend": "piper",
+    "tts_backend": "kokoro",
     "piper_voice": "en_GB-alan-medium",
     "stt_model": "small.en",
     "mic_mode": "ptt",
@@ -50,6 +50,16 @@ for key, value in defaults.items():
 # Migrate the original alpha greeting so existing installs also adopt Boss.
 if data.get("greeting") == "Hello Krishan, what are we working on today?":
     data["greeting"] = "Hello Boss, what are we working on today?"
+    changed = True
+
+# Migrate the original harsh Piper/Alan default to the smoother local Kokoro
+# voice. Keep Piper installed as an automatic fallback in mouth.py.
+if (
+    data.get("tts_backend") == "piper"
+    and data.get("piper_voice") == "en_GB-alan-medium"
+):
+    data["tts_backend"] = "kokoro"
+    data["voice"] = "bm_lewis"
     changed = True
 
 # The permanent default stays push-to-talk. --open-mic remains an explicit
