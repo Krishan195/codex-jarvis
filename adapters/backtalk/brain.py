@@ -28,7 +28,9 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 # Prefer natural clause boundaries, with a conservative hard-length fallback.
 _CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 _MIN_CLAUSE_CHARS = 42
-_MAX_VOICE_CHARS = 110
+_MAX_VOICE_CHARS = 340
+_VOICE_START_CHARS = 260
+_VOICE_CONTINUE_CHARS = 220
 SESSION_FILE = Path(CFG["signals_dir"]) / ".codex_thread"
 CAPABILITY_REVISION = 7
 
@@ -342,19 +344,33 @@ class WarmBrain:
         def pop_voice_chunk(force: bool = False) -> str | None:
             nonlocal buf
 
-            # Best boundary: a completed sentence.
-            m = _SENTENCE_END.search(buf)
-            if m:
-                chunk = buf[:m.end()].strip()
-                buf = buf[m.end():]
-                return chunk or None
+            # Do not start speaking on the first tiny sentence. Kokoro can
+            # render faster than Codex produces the following sentence, which
+            # makes the audio queue starve and creates the long dead-air gaps
+            # Boss hears. Build a small speech reservoir first, then keep each
+            # following chunk large enough to give synthesis/playback runway.
+            target = (
+                _VOICE_CONTINUE_CHARS if first_chunk_logged
+                else _VOICE_START_CHARS
+            )
 
-            # Next best: a substantial clause. This lets Kokoro begin
-            # sentence N+1 before Codex has finished the whole sentence.
-            if len(buf) >= _MIN_CLAUSE_CHARS:
+            if len(buf) >= target:
+                # Prefer the last completed sentence at or before our maximum
+                # chunk size. This keeps natural prosody while packing several
+                # short sentences together into one continuous TTS job.
+                sentence_end = None
+                for sm in _SENTENCE_END.finditer(buf[:_MAX_VOICE_CHARS + 1]):
+                    if sm.end() >= target:
+                        sentence_end = sm
+                if sentence_end:
+                    chunk = buf[:sentence_end.end()].strip()
+                    buf = buf[sentence_end.end():]
+                    return chunk or None
+
+                # Otherwise use a substantial clause boundary.
                 clause = None
-                for cm in _CLAUSE_END.finditer(buf):
-                    if cm.end() >= _MIN_CLAUSE_CHARS:
+                for cm in _CLAUSE_END.finditer(buf[:_MAX_VOICE_CHARS + 1]):
+                    if cm.end() >= target:
                         clause = cm
                 if clause:
                     chunk = buf[:clause.end()].strip()
