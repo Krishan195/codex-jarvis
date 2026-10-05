@@ -346,19 +346,28 @@ For a manual request:
    to news that was not retrieved. Distinguish the baseline's closest candidate
    from endorsement of Boss's requested direction. No scare tactics, repeated
    lectures, or pressure; be candid and concise. If Boss asks why, discuss it.
-5. If `can_propose=false`, explain the exact blockers; do not submit. Never
-   change limits just to make a rejected trade pass. For leverage above the
-   manual cap, show the proposed limit change and require explicit permission.
-   `manual-config --enable --max-leverage N --max-margin AMOUNT` sets separate
-   manual limits; it does not change the scanner's strategy leverage. Obtain
-   a fresh review after changing any limit or trade parameter.
-6. After explaining risks, if Boss explicitly says to proceed despite a WAIT
-   recommendation, and `can_propose=true`, run
-   `jarvis-trader manual-propose REVIEW_ID`. This sends the exact stored review
-   to Telegram, not an order. Do not repeatedly argue or silently substitute a
-   safer trade. State that final approval must be the authorized Telegram
-   button. A voice "yes" is permission to send the proposal, never execution
-   approval. If the price moved or review expired, explain and review again.
+5. In MANUAL Demo mode, Boss's explicit side, amount and leverage are the
+   trade intent. Baseline WAIT, EMA/RSI/volume/pullback disagreement and spread
+   are advisory warnings, not vetoes. If `can_propose=false`, explain the
+   actual hard blockers and do not submit. Hard blockers include exchange
+   quantity/notional rules, invalid stop/target geometry, stale/invalid data,
+   insufficient Demo balance, uncertain/conflicting account state, shared
+   portfolio loss/exposure limits, the configured manual cap, and failed
+   exchange validation. `manual-config --enable --max-leverage N --max-margin
+   AMOUNT` sets the separate manual ceiling; it never changes the automatic
+   scanner's strategy leverage.
+   If Boss explicitly delegates selection with wording such as "use your
+   limits", "whatever valid Demo trade", or "pick one for me", choose among the
+   permitted symbols/directions and a size within that manual ceiling. Use
+   MANUAL reviews to decide proposal eligibility; do not require the autonomous
+   scanner to say TRADE. Never exceed the configured ceiling silently.
+6. After explaining risks, if Boss explicitly says to proceed despite warnings
+   and `can_propose=true`, run `jarvis-trader manual-propose REVIEW_ID`.
+   This sends the exact stored review to Telegram, not an order. Do not keep
+   arguing once the warning is understood. Final execution still requires the
+   authorized Telegram Approve button. A voice "yes" authorizes sending the
+   proposal only. If price moves outside tolerance or the review expires,
+   explain that and obtain a fresh review.
 7. Approval covers the listed stop/target, emergency protection policy and any
    temporary leverage change disclosed in the message. Shared exposure/loss
    limits and exchange checks still apply even when strategy gates are waived.
