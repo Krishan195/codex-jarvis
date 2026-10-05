@@ -27,8 +27,8 @@ defaults = {
     "name": "Jarvis",
     "ptt_key": "home",
     "voice": "bm_lewis",
-    "tts_backend": "kokoro",
-    "piper_voice": "en_GB-alan-medium",
+    "tts_backend": "piper",
+    "piper_voice": "en_US-hfc_male-medium",
     "stt_model": "small.en",
     "mic_mode": "ptt",
     "permission_mode": "ask",
@@ -52,14 +52,14 @@ if data.get("greeting") == "Hello Krishan, what are we working on today?":
     data["greeting"] = "Hello Boss, what are we working on today?"
     changed = True
 
-# Migrate the original harsh Piper/Alan default to the smoother local Kokoro
-# voice. Keep Piper installed as an automatic fallback in mouth.py.
+# Keep Piper's low-latency, gapless behavior but migrate earlier voice
+# defaults to the more natural HFC male voice.
 if (
-    data.get("tts_backend") == "piper"
-    and data.get("piper_voice") == "en_GB-alan-medium"
+    data.get("tts_backend") == "kokoro"
+    or data.get("piper_voice") == "en_GB-alan-medium"
 ):
-    data["tts_backend"] = "kokoro"
-    data["voice"] = "bm_lewis"
+    data["tts_backend"] = "piper"
+    data["piper_voice"] = "en_US-hfc_male-medium"
     changed = True
 
 # The permanent default stays push-to-talk. --open-mic remains an explicit
