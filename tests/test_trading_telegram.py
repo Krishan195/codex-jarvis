@@ -66,6 +66,9 @@ class FakeBot:
     def updates(self, offset):
         return []
 
+    def health(self):
+        return {"authenticated": True, "private_chat": True, "webhook_conflict": False}
+
 
 def service_with_store(store: ApprovalStore) -> DemoTelegramApprovalService:
     service = object.__new__(DemoTelegramApprovalService)
@@ -412,6 +415,9 @@ class SymbolConfigTests(unittest.TestCase):
     def test_health_reads_symbol_config_even_without_open_position(self):
         with tempfile.TemporaryDirectory() as td:
             store = ApprovalStore(Path(td) / "state.sqlite3")
+            from jarvis_core.trading.journal import TradingJournal
+            journal = TradingJournal(store.path)
+            self.addCleanup(journal.conn.close)
             service = service_with_store(store)
             with patch(
                 "jarvis_core.trading.telegram_approval.demo_exchange.symbol_config",

@@ -41,6 +41,10 @@ class TelegramTransientError(RuntimeError):
     """Temporary Telegram/network failure that is safe to retry."""
 
 
+class TelegramAPIError(RuntimeError):
+    """Actionable API failure with no token-bearing URL or response body."""
+
+
 
 @dataclass
 class TelegramApprovalConfig:
@@ -397,6 +401,18 @@ class ApprovalStore:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
+    def poller_running(self) -> bool:
+        path = self.path.with_suffix(".telegram-loop.lock")
+        if not path.exists():
+            return False
+        with path.open("r") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+
     def update_peak_equity(self, current_equity: float) -> float:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -515,6 +531,13 @@ class TelegramBot:
             # Long-poll transport timeouts are expected occasionally. Keep the
             # token out of errors and let the caller retry safely.
             raise TelegramTransientError("Telegram long-poll timeout") from exc
+        except urllib.error.HTTPError as exc:
+            hints = {401: "bot token rejected", 403: "bot access denied; check the private chat",
+                     409: "another poller or webhook conflicts with this loop",
+                     429: "rate limited; retry after a delay"}
+            raise TelegramAPIError(
+                f"Telegram HTTP {exc.code}: {hints.get(exc.code, 'API request failed')}"
+            ) from None
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", None)
             if isinstance(reason, (TimeoutError, socket.timeout)):
@@ -531,8 +554,17 @@ class TelegramBot:
                 f"Telegram API failure ({type(exc).__name__})"
             ) from exc
         if not result.get("ok"):
-            raise RuntimeError(f"Telegram API rejected request: {result}")
+            raise TelegramAPIError("Telegram API rejected request (response body withheld)")
         return result["result"]
+
+    def health(self) -> dict[str, Any]:
+        me = self._call("getMe")
+        webhook = self._call("getWebhookInfo")
+        chat = self._call("getChat", {"chat_id": self.cfg.chat_id})
+        return {"authenticated": bool(me.get("is_bot")),
+                "private_chat": chat.get("type") == "private",
+                "webhook_conflict": bool(webhook.get("url")),
+                "pending_update_count": webhook.get("pending_update_count", 0)}
 
     def send(self, text: str, *, keyboard: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._call(
@@ -594,81 +626,91 @@ def _proposal_message(
     target = float(p["take_profit"])
     stop = float(p["stop_loss"])
     gross_target = abs(target - entry) * qty
-    estimated_costs = (
-        float(p.get("estimated_entry_fee", 0))
-        + float(p.get("estimated_exit_fee", 0))
-        + float(p.get("estimated_slippage", 0))
-        + float(p.get("estimated_funding", 0))
-    )
-    net_target = max(0.0, gross_target - estimated_costs)
-    rr = (net_target / risk) if risk > 0 else 0.0
+    estimated_costs = sum(float(p.get(key, 0)) for key in (
+        "estimated_entry_fee", "estimated_exit_fee", "estimated_slippage",
+        "estimated_spread_cost", "estimated_funding"))
+    net_target = gross_target - estimated_costs
+    manual = p.get("source") == "MANUAL"
+    if manual:
+        metrics = p["risk_review"]["metrics"]
+        risk = float(metrics["estimated_loss_at_stop"])
+        net_target = float(metrics["estimated_net_target_profit"])
+        estimated_costs = float(metrics.get("estimated_costs", estimated_costs))
+    rr = f"1 : {net_target / risk:.2f}" if risk > 0 else "N/A"
     tolerance = entry * tolerance_bps / 10_000.0
     expires = datetime.fromtimestamp(
         row["expires_at_ms"] / 1000, timezone.utc
     ).astimezone().isoformat(timespec="seconds")
-    brief = "; ".join(p.get("evidence", [])[:4])
-
-    if p.get("source") == "MANUAL":
+    symbol = str(p["symbol"])
+    pair = f"{symbol[:-4]} / USDT" if symbol.endswith("USDT") else symbol
+    direction = p["direction"]
+    marker = "🟢" if direction == "LONG" else "🔴"
+    rule = "━━━━━━━━━━━━━━━━━━"
+    lines = [
+        f"{marker} {pair} — {direction}",
+        "🧪 BINANCE DEMO · " + ("MANUAL TRADE" if manual else "STRATEGY TRADE"),
+        rule, "",
+        f"⚡ Leverage: {float(p['leverage']):g}x · {margin_mode}",
+        f"💰 Entry: {_fmt_price(entry)} USDT (reference)",
+        f"Order: {p['order_type']} · Quantity: {qty:g}", "",
+        "🎯 TAKE PROFIT",
+        f"TP1  {_fmt_price(target)} USDT (full position)", "",
+        f"🛑 Stop Loss: {_fmt_price(stop)} USDT", "",
+        f"📊 Risk / Reward (net est.): {rr}",
+        f"💵 Margin: {margin:.2f} USDT (est.; fees extra)",
+        f"📈 Position Size: {notional:.2f} USDT (est.)",
+        f"Loss at stop (est.): {risk:.4f} USDT",
+        f"Net target profit (est.): {net_target:.4f} USDT",
+        f"Costs (est.): {estimated_costs:.4f} USDT", "",
+        rule,
+        "🤖 JARVIS SIGNAL",
+        f"Strategy: {p['strategy_version']}",
+    ]
+    if manual:
         review = p["risk_review"]
-        metrics = review["metrics"]
-        warnings = "\n".join("- " + text for text in review["warnings"][:6]) or "No additional rule-based warning."
-        return (
-            "DEMO — MANUAL TRADE APPROVAL REQUIRED\n"
-            f"Proposal: {row['proposal_id']}\nExpires: {expires}\n"
-            f"{p['symbol']} {p['direction']} MARKET; ISOLATED {p['leverage']}x\n"
-            f"Quantity: {qty:g}; exposure about {notional:.2f} USDT\n"
-            f"Estimated margin: {margin:.2f} USDT (fees extra)\n"
-            f"Pre-submit price range: {_fmt_price(entry - tolerance)}–{_fmt_price(entry + tolerance)} (market fills can slip)\n"
-            f"Stop: {_fmt_price(stop)}; target: {_fmt_price(target)}\n"
-            f"ATR-suggested stop/target: {p['suggested_stop']}/{p['suggested_target']}\n"
-            f"Estimated stop loss: {metrics['estimated_loss_at_stop']:.4f} USDT "
-            f"({metrics['loss_percent_of_margin']:.1f}% of initial margin)\n"
-            f"Estimated net target: {metrics['estimated_net_target_profit']:.4f} USDT\n"
-            f"1% adverse move before costs: {metrics['adverse_one_percent_loss_before_costs']:.4f} USDT\n"
-            f"Assessment: {review['recommendation']}\n{warnings}\n\n"
-            f"Approval overrides strategy entry gates for THIS request only. It authorizes "
-            f"setting this flat Demo symbol from {p['previous_leverage']:g}x to {p['leverage']}x, "
-            f"then restoring {p['restore_leverage']:g}x once flat and clear of orders. "
-            "It also covers the listed stop/target and an emergency reduce-only close if protection fails or the fill violates the approved range. "
-            "Stops can slip; liquidation price is not guaranteed or predicted. No live order."
-        )
-
-    return (
-        "DEMO — TRADE APPROVAL REQUIRED\n\n"
-        f"Proposal: {row['proposal_id']}\n"
-        f"Expires: {expires}\n"
-        f"{p['symbol']} {p['market_type'].upper()} {p['direction']}\n"
-        f"Strategy: {p['strategy_version']} — {brief}\n\n"
-        f"Order: {p['order_type']}\n"
-        f"Entry reference: {_fmt_price(entry)}\n"
-        f"Permitted execution: {_fmt_price(entry - tolerance)} to {_fmt_price(entry + tolerance)}\n"
-        f"Quantity: {qty}\n"
-        f"Notional: {notional:.2f} USDT\n"
-        f"Leverage: {p['leverage']}x\n"
-        f"Margin mode: {margin_mode}\n"
-        f"Estimated margin: {margin:.2f} USDT\n\n"
-        f"Stop: {_fmt_price(stop)}\n"
-        f"Target: {_fmt_price(target)}\n"
-        "Trailing stop: none in baseline v1\n"
-        f"Estimated loss at stop: {risk:.2f} USDT\n"
-        f"Estimated net target profit: {net_target:.2f} USDT\n"
-        f"Estimated costs: {estimated_costs:.2f} USDT\n"
-        f"Risk/reward: {rr:.2f}R\n"
-        f"Current account exposure: {exposure:.2f} USDT\n\n"
-        "Approval covers this entry plus the listed stop/target and emergency "
-        "reduce-only close if protection cannot be established."
-    )
+        lines += [
+            f"Assessment: {review['recommendation']}",
+            f"ATR-suggested stop/target: {p['suggested_stop']}/{p['suggested_target']}",
+            f"Stop loss / initial margin: {metrics['loss_percent_of_margin']:.1f}% (est.)",
+            f"1% adverse move before costs: {metrics['adverse_one_percent_loss_before_costs']:.4f} USDT",
+        ]
+        lines += ["⚠ " + warning for warning in review["warnings"][:6]]
+    else:
+        lines += ["Assessment: strategy conditions passed (not a win probability)"]
+        evidence = p.get("evidence", [])
+        lines += ["• " + str(item) for item in evidence if str(item).startswith("15m confirmation score=")]
+        lines += ["• " + str(item) for item in evidence[:4]]
+    lines += [
+        "", "Status: ⏳ Waiting for approval",
+        f"Expires: {expires}",
+        f"Proposal: {row['proposal_id']}",
+        f"Pre-submit range: {_fmt_price(entry - tolerance)}–{_fmt_price(entry + tolerance)} USDT",
+        f"Current account exposure: {exposure:.2f} USDT", "",
+    ]
+    if manual:
+        lines += [
+            "Approval overrides strategy entry gates for THIS request only. "
+            f"It authorizes setting this flat Demo symbol from {p['previous_leverage']:g}x to {p['leverage']}x, "
+            f"then restoring {p['restore_leverage']:g}x once flat and clear of orders."
+        ]
+    lines += [
+        "Approval covers this entry, the listed stop/target, and an emergency "
+        "reduce-only close if protection fails"
+        + (" or the fill violates the approved range." if manual else "."),
+        "Market fills and stops can slip. Demo funds only; no live order.",
+    ]
+    return "\n".join(lines)
 
 
 def _keyboard(proposal_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [[
             {
-                "text": "Approve",
+                "text": "✅ Approve",
                 "callback_data": f"trade:approve:{proposal_id}",
             },
             {
-                "text": "Reject",
+                "text": "❌ Reject",
                 "callback_data": f"trade:reject:{proposal_id}",
             },
         ]]
@@ -689,12 +731,18 @@ class DemoTelegramApprovalService:
         self.telegram_cfg = telegram_cfg or load_telegram_config()
         self.store = store or ApprovalStore()
         self.bot = bot or TelegramBot(self.telegram_cfg)
-        self.engine = TradingEngine(self.trading_cfg)
+        if self.trading_cfg.market_type != "futures":
+            raise ValueError("Telegram Demo execution requires a futures trading configuration.")
+        self.engine = TradingEngine(self.trading_cfg, market=DemoMarketData(
+            stale_grace_seconds=self.trading_cfg.stale_grace_seconds))
 
     def _refresh_config(self) -> None:
         if getattr(self, "_reload_from_disk", False):
             self.trading_cfg = load_config(CONFIG_PATH)
             self.engine.cfg = self.trading_cfg
+            if self.trading_cfg.market_type != "futures":
+                raise ValueError("Telegram Demo execution requires a futures trading configuration.")
+            self.engine.market.stale_grace_seconds = self.trading_cfg.stale_grace_seconds
 
     def _notify(self, text: str) -> None:
         # A Telegram outage MUST NOT interrupt order reconciliation/protection.
@@ -840,6 +888,7 @@ class DemoTelegramApprovalService:
                     self.engine.journal.event("MANUAL_LEVERAGE_RESTORE_RETRY", {"error_type": type(exc).__name__}, row["symbol"])
 
     def health(self) -> dict[str, Any]:
+        self._refresh_config()
         symbols: dict[str, Any] = {}
         for symbol in self.trading_cfg.permitted_symbols:
             row = demo_exchange.symbol_config(symbol)
@@ -863,8 +912,42 @@ class DemoTelegramApprovalService:
             "paused": self.trading_cfg.paused,
             "manual_limits": asdict(self.trading_cfg.manual),
             "demo_api": demo_exchange.auth_health(),
+            "poller_running": self.store.poller_running(),
+            "telegram_api": self.bot.health(),
+            "market_data_environment": "DEMO",
+            "latest_scan": self.latest_scan(),
             "symbols": symbols,
         }
+
+    def latest_scan(self) -> dict[str, Any]:
+        out = {}
+        for symbol in self.trading_cfg.permitted_symbols:
+            row = self.store.conn.execute("""SELECT created_at,event_type,payload_json FROM events
+                WHERE symbol=? AND event_type LIKE 'TELEGRAM_SCAN_%' ORDER BY id DESC LIMIT 1""",
+                (symbol,)).fetchone()
+            if row:
+                payload = json.loads(row["payload_json"])
+                out[symbol] = {"at": row["created_at"], "event": row["event_type"],
+                    "reasons": payload.get("failure_reasons", []) + payload.get("risk_rejections", [])
+                        + ([payload["reason"]] if payload.get("reason") else [])
+                        + ([payload["error_type"]] if payload.get("error_type") else [])}
+            else:
+                out[symbol] = {"event": "NOT_SCANNED"}
+        return out
+
+    def preview_scan(self) -> list[dict[str, Any]]:
+        """Evaluate current Demo conditions without sending proposals or orders."""
+        self._refresh_config()
+        results = []
+        for symbol in self.trading_cfg.permitted_symbols:
+            try:
+                proposal, exposure, margin = self._scan_candidate(symbol)
+                results.append({"symbol": symbol, "environment": "DEMO", "proposal": proposal,
+                                "aggregate_exposure": exposure, "margin_mode": margin})
+            except Exception as exc:
+                results.append({"symbol": symbol, "environment": "DEMO", "decision": "ERROR",
+                                "error_type": type(exc).__name__})
+        return results
 
     def _demo_state(self, symbol: str) -> tuple[AccountState, float, str, float]:
         balances = demo_exchange.balance()
@@ -931,26 +1014,38 @@ class DemoTelegramApprovalService:
             state.state_certain = False
         return state, exposure, margin_mode, actual_leverage
 
-    def create_and_send(self, symbol: str) -> dict[str, Any] | None:
+    def _scan_candidate(self, symbol: str) -> tuple[dict[str, Any], float, str]:
         self._refresh_config()
+        if symbol not in self.trading_cfg.permitted_symbols:
+            raise ValueError("Symbol is not permitted.")
+        def blocked(reason, exposure=0.0, margin="UNKNOWN"):
+            return {"symbol": symbol, "decision": "WAIT", "failure_reasons": [reason]}, exposure, margin
         if self.trading_cfg.paused:
-            return None
+            return blocked("New entries are paused.")
         demo_state, exposure, margin_mode, actual_leverage = self._demo_state(symbol)
         if margin_mode != self.trading_cfg.margin_mode:
-            self.engine.journal.event("TELEGRAM_SCAN_SKIPPED", {"reason": "margin mode mismatch"}, symbol)
-            return None
+            return blocked("Demo margin mode does not match configuration.", exposure, margin_mode)
         if actual_leverage != float(self.trading_cfg.risk.max_leverage):
-            self.engine.journal.event("TELEGRAM_SCAN_SKIPPED", {"reason": "leverage mismatch"}, symbol)
-            return None
+            return blocked("Demo leverage does not match automatic strategy configuration.", exposure, margin_mode)
+        if any(abs(float(p["position_amt"])) > 0 for p in demo_exchange.positions(symbol)):
+            return blocked("An existing Demo position occupies this symbol.", exposure, margin_mode)
+        if demo_exchange.open_orders(symbol) or demo_exchange.open_algo_orders(symbol):
+            return blocked("Outstanding Demo orders occupy this symbol.", exposure, margin_mode)
+        if demo_exchange.position_mode().get("dualSidePosition") not in (False, "false"):
+            return blocked("Demo execution requires one-way position mode.", exposure, margin_mode)
         proposal = self.engine.proposal(
             symbol,
             account_state_override=demo_state,
             require_enabled=False,
         )
-        if proposal.decision != "TRADE":
-            self.engine.journal.event("TELEGRAM_SCAN_WAIT", proposal.as_dict(), symbol)
+        return proposal.as_dict(), exposure, margin_mode
+
+    def create_and_send(self, symbol: str) -> dict[str, Any] | None:
+        payload, exposure, margin_mode = self._scan_candidate(symbol)
+        if payload["decision"] != "TRADE":
+            self.engine.journal.event("TELEGRAM_SCAN_WAIT", payload, symbol)
             return None
-        payload = proposal.as_dict()
+        payload.setdefault("data_health", {})["environment"] = "DEMO"
         payload["approval_price_tolerance_bps"] = self.telegram_cfg.price_tolerance_bps
         payload["margin_mode"] = margin_mode
         row = self.store.create(
@@ -960,6 +1055,7 @@ class DemoTelegramApprovalService:
         if not row.pop("_created", False) and (row["status"] != "PENDING" or row.get("telegram_message_id")):
             return None
         self._deliver(row, exposure=exposure, margin_mode=margin_mode)
+        self.engine.journal.event("TELEGRAM_SCAN_SENT", {"proposal_id": row["proposal_id"]}, symbol)
         return self.store.get(row["proposal_id"])
 
     @staticmethod
@@ -1367,9 +1463,13 @@ class DemoTelegramApprovalService:
         if text == "/status":
             health = demo_exchange.auth_health()
             pending = len(self.store.pending())
+            scan = self.latest_scan()
+            details = "\n".join(f"{symbol}: {value['event']} "
+                + "; ".join(value.get("reasons", [])[:3]) for symbol, value in scan.items())
             self.bot.send(
                 f"DEMO — trading approval service healthy. "
-                f"Pending proposals: {pending}. Clock skew: {health['clock_skew_ms']} ms."
+                f"Paused: {self.trading_cfg.paused}. Pending proposals: {pending}. "
+                f"Clock skew: {health['clock_skew_ms']} ms.\n{details}"[:3900]
             )
         elif text == "/pending":
             rows = self.store.pending()

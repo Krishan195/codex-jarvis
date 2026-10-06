@@ -21,11 +21,12 @@ class TradingEngine:
         cfg: TradingConfig | None = None,
         *,
         journal: TradingJournal | None = None,
+        market: BinancePublicMarketData | None = None,
     ):
         self.cfg = cfg or load_config()
         self.cfg.validate()
         self.journal = journal or TradingJournal()
-        self.market = BinancePublicMarketData(
+        self.market = market or BinancePublicMarketData(
             self.cfg.market_type,
             stale_grace_seconds=self.cfg.stale_grace_seconds,
         )

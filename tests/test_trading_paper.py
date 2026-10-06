@@ -164,7 +164,7 @@ class JournalTests(unittest.TestCase):
 
 
 class StrategyTests(unittest.TestCase):
-    def test_wait_is_valid_when_gates_do_not_qualify(self):
+    def test_confirmation_threshold_can_wait_or_qualify(self):
         step15 = 900_000
         signal = [candle(i * step15, 100 + i * 0.1) for i in range(120)]
 
@@ -175,7 +175,7 @@ class StrategyTests(unittest.TestCase):
             enabled=True,
             risk=RiskConfig(allocated_capital_quote=10_000),
         ).strategy
-        p = generate_proposal(
+        inputs = dict(
             symbol="BTCUSDT",
             market_type="futures",
             signal_candles=signal,
@@ -195,8 +195,13 @@ class StrategyTests(unittest.TestCase):
             cfg=cfg,
             leverage=2,
         )
-        self.assertEqual(p.decision, "WAIT")
-        self.assertTrue(p.failure_reasons)
+        for threshold, expected in [(4, "TRADE"), (6, "WAIT")]:
+            with self.subTest(threshold=threshold):
+                cfg.min_confirmation_score = threshold
+                p = generate_proposal(**inputs)
+                self.assertEqual(p.decision, expected)
+                self.assertTrue(p.failure_reasons)  # Weak confirmations remain disclosed.
+                self.assertTrue(any(f"minimum {threshold}" in e for e in p.evidence))
 
 
 class ProtectionFailureTests(unittest.TestCase):

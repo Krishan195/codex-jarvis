@@ -33,8 +33,8 @@ def validate_book(book, now: int) -> None:
 
 class DemoMarketData(BinancePublicMarketData):
     """Price and filters from the SAME environment as the requested order."""
-    def __init__(self):
-        super().__init__("futures")
+    def __init__(self, *, stale_grace_seconds: int = 120):
+        super().__init__("futures", stale_grace_seconds=stale_grace_seconds)
 
     @property
     def bases(self) -> tuple[str, ...]:
