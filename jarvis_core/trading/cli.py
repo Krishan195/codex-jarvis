@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import json
+import signal
 import sys
 import time
 
@@ -219,6 +220,11 @@ def cmd_telegram_health(_args) -> int:
     return 0
 
 
+def cmd_telegram_scan(_args) -> int:
+    _json(DemoTelegramApprovalService().preview_scan())
+    return 0
+
+
 def cmd_telegram_discover(_args) -> int:
     rows = discover_private_chats()
     if not rows:
@@ -276,19 +282,28 @@ def _telegram_loop(service, args) -> int:
     scan_every = max(15, int(args.scan_seconds))
     next_scan = 0.0
     consecutive_errors = 0
+    stopping = False
+    def request_stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+    previous_handlers = {sig: signal.signal(sig, request_stop)
+                         for sig in (signal.SIGINT, signal.SIGTERM)}
     print(
         "DEMO Telegram approval loop running. New entries require an authorized "
         "Approve button. Ctrl+C to stop."
     )
     try:
-        while True:
+        while not stopping:
             try:
                 now = time.monotonic()
                 if now >= next_scan:
                     created = service.propose_scan()
                     if created:
                         print("Sent proposal(s): " + ", ".join(created))
+                    print("Latest Demo scan: " + json.dumps(service.latest_scan()))
                     next_scan = now + scan_every
+                if stopping:
+                    break
                 service.poll_once()
                 consecutive_errors = 0
             except Exception as exc:
@@ -302,7 +317,9 @@ def _telegram_loop(service, args) -> int:
                     file=sys.stderr,
                 )
                 time.sleep(delay)
-    except KeyboardInterrupt:
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
         print("DEMO Telegram approval loop stopped.")
     return 0
 
@@ -463,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("telegram-health")
     s.set_defaults(func=cmd_telegram_health)
+
+    s = sub.add_parser("telegram-scan", help="Diagnose Demo strategy gates; sends no message or order.")
+    s.set_defaults(func=cmd_telegram_scan)
 
     s = sub.add_parser("telegram-discover")
     s.set_defaults(func=cmd_telegram_discover)

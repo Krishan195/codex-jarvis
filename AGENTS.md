@@ -303,6 +303,20 @@ duplicate clicks, changed price beyond tolerance, changed quantity/leverage,
 changed stop/target, uncertain account state, pending orders, or failed
 revalidation mean no new order.
 
+### Missing Telegram proposals
+
+Use `jarvis-trader telegram-health` to check the poller, Telegram connection,
+Demo account settings, and latest scan reasons. Use `jarvis-trader telegram-scan`
+to inspect current Demo strategy gates without sending a message or order.
+`jarvis-trading.service` is the optional supervised user service; inspect it with
+`systemctl --user status jarvis-trading.service`. Do not launch a second poller.
+Automatic scans and manual reviews both use Demo prices and symbol filters.
+WAIT means no qualifying proposal; explain the actual failed conditions.
+Do not lower strategy gates or raise limits just to produce a Telegram message.
+PAPER `enabled=false` does not disable the separately approved Demo workflow.
+The loop must be running to scan and process approval buttons. Never claim it
+is running just because credentials exist or an old proposal was delivered.
+
 The exchange execution boundary independently checks that the exact proposal
 was approved and atomically claimed before allowing a Demo exposure increase.
 Do not invoke low-level exchange functions to work around this control.

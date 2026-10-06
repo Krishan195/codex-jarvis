@@ -314,6 +314,23 @@ approval -> revalidate -> Binance Demo order -> query actual status ->
 protect actual fill -> notify
 ```
 
+Both automatic proposals and manual reviews use the Demo market-data adapter.
+The standalone PAPER engine continues to use public live-market data. Do not
+mix a live quote or filter with a proposal to execute on Demo.
+
+The optional `tools/install_trading_service.py` installs a supervised
+`jarvis-trading.service` user unit without starting it. Explicitly enabling and
+starting the unit makes scanning independent of the voice session and terminal.
+The existing poller lock rejects a second consumer. SIGINT/SIGTERM request a
+graceful exit after the current operation, allowing an in-flight execution to
+finish its confirmation/protection work before the process exits.
+
+`telegram-health` reports the lock state, Telegram authentication/private-chat
+access, webhook conflicts and latest per-symbol scan reasons. `telegram-scan`
+performs a diagnostic scan without sending or executing. These checks do not
+relax strategy, exchange or portfolio limits. Telegram HTTP conflicts and
+authentication failures are reported explicitly, without token-bearing URLs.
+
 Production/live Binance order execution is not implemented by this build.
 
 ### Security model

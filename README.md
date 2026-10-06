@@ -574,8 +574,52 @@ Run the approval service:
 jarvis-trader telegram-loop --scan-seconds 60
 ```
 
+For a loop that survives closing the terminal and restarts after failures,
+install the optional user service, then explicitly start it:
+
+```bash
+python3 tools/install_trading_service.py
+systemctl --user enable --now jarvis-trading.service
+```
+
+Use one loop only. If a foreground loop is already running, stop it before
+starting the service. The laptop must remain awake and online; the user service
+starts with your user session and needs the unlocked Secret Service keyring.
+The installer does not start trading, change limits, or change the voice model.
+Starting the service enables automatic qualifying proposals; every new Demo
+order still requires your private Telegram Approve button.
+
+If proposals do not arrive:
+
+```bash
+jarvis-trader telegram-health
+jarvis-trader telegram-scan
+systemctl --user status jarvis-trading.service
+journalctl --user -u jarvis-trading.service -n 40 --no-pager
+```
+
+`telegram-health` checks the actual poller lock, bot/private-chat access,
+webhook conflicts, Demo account settings and latest scan reasons.
+`telegram-scan` evaluates current Demo conditions without sending a proposal or
+placing an order. A `WAIT` result is not a delivery failure: its failed strategy
+conditions must clear before an automatic proposal is eligible. The PAPER
+`enabled` setting is separate from this Demo approval workflow.
+
+Automatic proposals now use Demo prices and exchange filters, matching their
+execution environment. `/status` in your authorized Telegram chat includes
+the latest automatic scan reasons. Use `systemctl --user stop jarvis-trading`
+to stop the service; disabling it also removes automatic startup.
+
 The bot accepts `/status`, `/pending`, `/positions`, `/pause`, and
 `/resume` only from the configured user in the configured private chat.
+
+Approval cards identify direction with 🟢 LONG or 🔴 SHORT and group entry,
+leverage, take-profit, stop-loss, estimated net risk/reward, margin, and position
+size. They retain expiry, price tolerance, risk warnings and the exact approval
+scope. The current engine has one full-position target (TP1); it does not invent
+TP2/TP3 or a confidence percentage. A strategy confirmation count is a rules
+score, not a measured win probability. Approve/Reject buttons retain the same
+single-use authorization checks.
 
 The authenticated order client remains hard-pinned to Binance Futures Demo.
 Production/live order execution is not implemented in this repository.
